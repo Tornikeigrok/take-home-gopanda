@@ -105,6 +105,7 @@ export const Dashboard = () => {
           return;
         }
         const data = await res.json();
+        console.log(data);
         setRooms(data.rooms);
       } catch (error) {
         console.error(error);
@@ -128,6 +129,7 @@ export const Dashboard = () => {
       setRequesting(false);
       setTimeConflict(false);
       setConflicts([]);
+      setConfirmedBooking(false);
     }
     return() => {document.body.style.overflow = ''}
   }, [openDetailsModal]);
@@ -157,6 +159,7 @@ export const Dashboard = () => {
           return;
         }
         const data = await res.json();
+        console.log(data);
         setRoomSchedule(data);
       } catch (error) {
         console.error(error);
@@ -170,7 +173,9 @@ export const Dashboard = () => {
  const [conflicts, setConflicts] = useState<bookingRule[]>([]);
  const [requesting, setRequesting] = useState(false);
  const [confirmDate, setConfirmDate] = useState(Date.now());
+ const [now, setNow] = useState(Date.now());
 
+ const [tentativeRoomId, setTentativeRoomId] = useState<number | null>(null);
  const requestBooking = async(roomId: number)=>{
     const token = Cookies.get('access-token');
     setRequesting(true);
@@ -191,7 +196,9 @@ export const Dashboard = () => {
           console.log(data);
           setSuccessfulReq(true);
           setConfirmDate(Date.now() + 10 * 60 * 1000);
-          //If request went successfully
+          setNow(Date.now());
+          setTentativeRoomId(data.bookDetails.id);
+          console.log(data);
         }
         else if(res.status === 409){
             const data = await res.json();
@@ -215,7 +222,8 @@ export const Dashboard = () => {
         setRequesting(false);
       }
   }
-  const [now, setNow] = useState(Date.now());
+ 
+  //--- The 10 minute countdown ---//
   useEffect(()=>{
     if(!successfulReq) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -234,7 +242,25 @@ export const Dashboard = () => {
     setConflicts([]);
   }, [selectedDate, startTime, endTime]);
 
-  
+
+  //--- Confirm Booking section ---//
+  const [confirmedBooking, setConfirmedBooking] = useState(false);
+  const confirmBooking = async (id: number) => {
+    const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl(`confirmBooking/${id}`), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      setConfirmedBooking(true);
+      console.log(data);
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
+
 
 
   const [sortByCapacity, setSortByCapacity] = useState<"none" | "asc" | "desc">("none");
@@ -488,6 +514,23 @@ export const Dashboard = () => {
                 <p className="mt-5 text-sm font-medium">Submitting request…</p>
                 <p className="mt-1 text-xs text-neutral-500">Talking to the server, hang tight.</p>
               </div>
+            ) : confirmedBooking ? (
+              <div className="px-6 py-12 flex flex-col items-center justify-center text-center">
+                <div className="h-14 w-14 rounded-full bg-neutral-900 text-white flex items-center justify-center text-2xl font-bold">
+                  ✓
+                </div>
+                <h3 className="mt-5 text-lg font-bold tracking-tight">Booking confirmed</h3>
+                <p className="mt-2 text-sm text-neutral-600 max-w-[320px]">
+                  Your room is locked in. You can find it any time in your profile.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setOpenDetailsModal(false)}
+                  className="mt-6 rounded-full bg-neutral-900 text-white px-6 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
             ) : successfulReq ? (
               <div className="px-6 py-12 flex flex-col items-center justify-center text-center">
                 <div className="h-14 w-14 rounded-full bg-neutral-900 text-white flex items-center justify-center text-2xl font-bold">
@@ -531,11 +574,12 @@ export const Dashboard = () => {
                     onClick={() => setOpenDetailsModal(false)}
                     className="flex-1 rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
                   >
-                    Done
+                    Confirm Later
                   </button>
                   <button
+                     disabled={remainingMs === 0 || tentativeRoomId === null}
+                    onClick={()=> confirmBooking(tentativeRoomId)}
                     type="button"
-                    disabled={remainingMs === 0}
                     className="flex-1 rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer disabled:bg-neutral-300 disabled:cursor-not-allowed"
                   >
                     Confirm now
