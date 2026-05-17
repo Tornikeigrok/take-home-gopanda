@@ -163,6 +163,19 @@ app.get("/userInfo", tokenAuthentication, async(req, res, next)=>{
     }
 })
 
+//--- This is for user's profile. Return all the rooms they have scheduled, if any ---//
+app.get("/usersScheduledRooms", tokenAuthentication, async(req, res, next)=>{
+    const {email} = req.user;
+    try {
+        const userInfo = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+        const userId = userInfo.rows[0].id;
+        const bookingByUserId = await pool.query("SELECT * FROM bookings WHERE user_id = $1", [userId]);
+        res.status(200).json({sucess: true, userBookings: bookingByUserId.rows});
+    } catch (error) {
+        next(error);
+    }
+})
+
 
 
 //--- Room endpoints - These andpoints all require tokens ---//
