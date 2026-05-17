@@ -1,9 +1,10 @@
-import React from 'react'
+import React from "react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Cookies from "js-cookie";
 import { getUrl } from "./ApiCall";
 import { motion } from "framer-motion";
+import toast from "react-hot-toast";
 
 interface bookingsRule {
   id: number;
@@ -22,65 +23,132 @@ interface UserInfo {
   userName?: string;
 }
 
-
 export const UserProfile = () => {
-    const navigate = useNavigate();
+  const navigate = useNavigate();
 
-    useEffect(()=> {
-        const token = Cookies.get('access-token');
+  useEffect(() => {
+    const token = Cookies.get("access-token");
 
-        if(!token){
-            navigate('/');
-        }
-    }, []);
-
-    //--- User info ---//
-      const [userInfo, setUserInfo] = useState<UserInfo | undefined>();
-      useEffect(() => {
-        const currentUserInfo = async () => {
-          const token = Cookies.get("access-token");
-          try {
-            const res = await fetch(getUrl("userInfo"), {
-              method: "GET",
-              headers: { Authorization: "Bearer " + token },
-            });
-            if (res.ok) {
-              const data = await res.json();
-              console.log(data);
-              setUserInfo(data);
-            }
-          } catch (error) {
-            console.error(error);
-          }
-        };
-        currentUserInfo();
-      }, []);
-
-    //--- Return all the scheduled rooms user has, if any ---//
-    const [bookingInfo, setBookingInfo] = useState<bookingsRule[]>([]);
-    useEffect(()=>{
-      const scheduledRooms = async()=>{
-        const token = Cookies.get('access-token');
-        try {
-            const res = await fetch(getUrl('usersScheduledRooms'), {
-                method: "GET",
-                headers: {"Authorization": "Bearer " + token}
-            });
-            if(res.ok){
-                const data = await res.json();
-                setBookingInfo(data.userBookings);
-                console.log(data);
-            }
-        } catch (error) {
-            return;
-        }
+    if (!token) {
+      navigate("/");
     }
+  }, []);
+
+  //--- User info ---//
+  const [userInfo, setUserInfo] = useState<UserInfo | undefined>();
+  useEffect(() => {
+    const currentUserInfo = async () => {
+      const token = Cookies.get("access-token");
+      try {
+        const res = await fetch(getUrl("userInfo"), {
+          method: "GET",
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (res.status === 401) {
+          Cookies.remove("access-token");
+          toast.error("Session expired. Please log in again.");
+          navigate("/");
+          return;
+        }
+        if (!res.ok) {
+          toast.error("Couldn't load your profile.");
+          return;
+        }
+        const data = await res.json();
+        setUserInfo(data);
+      } catch (error) {
+        console.error(error);
+        toast.error("Network error. Check your connection.");
+      }
+    };
+    currentUserInfo();
+  }, []);
+
+  //--- Return all the scheduled rooms user has, if any ---//
+  const [bookingInfo, setBookingInfo] = useState<bookingsRule[]>([]);
+  useEffect(() => {
+    const scheduledRooms = async () => {
+      const token = Cookies.get("access-token");
+      try {
+        const res = await fetch(getUrl("usersScheduledRooms"), {
+          method: "GET",
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (res.status === 401) {
+          Cookies.remove("access-token");
+          toast.error("Session expired. Please log in again.");
+          navigate("/");
+          return;
+        }
+        if (!res.ok) {
+          toast.error("Couldn't load your bookings.");
+          return;
+        }
+        const data = await res.json();
+        console.log(data);
+        setBookingInfo(data.userBookings);
+      } catch (error) {
+        console.error(error);
+        toast.error("Network error. Check your connection.");
+      }
+    };
     scheduledRooms();
-    }, []);
+  }, []);
+
+  const scheduledRooms = async () => {
+      const token = Cookies.get("access-token");
+      try {
+        const res = await fetch(getUrl("usersScheduledRooms"), {
+          method: "GET",
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (res.status === 401) {
+          Cookies.remove("access-token");
+          toast.error("Session expired. Please log in again.");
+          navigate("/");
+          return;
+        }
+        if (!res.ok) {
+          toast.error("Couldn't load your bookings.");
+          return;
+        }
+        const data = await res.json();
+        console.log(data);
+        setBookingInfo(data.userBookings);
+      } catch (error) {
+        console.error(error);
+        toast.error("Network error. Check your connection.");
+      }
+    };
+
+  //--- Confirm booking section ---//
+  const [confirmed, setConfirmed] = useState(false);
+  const [wantsToConfirm, setWantsToConfirm] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState(0);
+  const confirmBooking = async (id: number) => {
+    const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl(`confirmBooking/${id}`), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      setConfirmed(true);
+      scheduledRooms();
+      console.log(data);
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
+
   const statusPill = (status: string) => {
-    const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider";
-    if (status === "confirmed") return `${base} bg-neutral-900 text-white border border-neutral-900`;
-    if (status === "tentative") return `${base} bg-amber-50 text-amber-800 border border-amber-300`;
+    const base =
+      "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider";
+    if (status === "confirmed")
+      return `${base} bg-neutral-900 text-white border border-neutral-900`;
+    if (status === "tentative")
+      return `${base} bg-amber-50 text-amber-800 border border-amber-300`;
     return `${base} bg-neutral-50 text-neutral-500 border border-neutral-300`;
   };
 
@@ -96,7 +164,9 @@ export const UserProfile = () => {
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 text-white text-sm font-bold">
               M
             </span>
-            <span className="text-lg md:text-xl font-bold tracking-tight">MeetMe</span>
+            <span className="text-lg md:text-xl font-bold tracking-tight">
+              MeetMe
+            </span>
           </button>
 
           <button
@@ -132,7 +202,9 @@ export const UserProfile = () => {
               Your bookings
             </h2>
             <p className="mt-1 text-sm text-neutral-600">
-              {bookingInfo.length} {bookingInfo.length === 1 ? "reservation" : "reservations"} on file.
+              {bookingInfo.length}{" "}
+              {bookingInfo.length === 1 ? "reservation" : "reservations"} on
+              file.
             </p>
           </div>
         </div>
@@ -217,30 +289,142 @@ export const UserProfile = () => {
 
                 <div className="mt-5 flex items-center gap-2">
                   {data.status === "tentative" ? (
-                     <button
-                    type="button"
-                    className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
-                  >
-                    Confirm
-                  </button>
-                  ) : data.status === "cancelled" ?  (
-                     <button
-                    type="button"
-                    className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
-                  >
-                    Details
-                  </button>
+                    <button
+                      onClick={() => {
+                        setWantsToConfirm(true);
+                        setSelectedRoom(data.id)
+                      }}
+                      type="button"
+                      className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
+                    >
+                      Confirm
+                    </button>
+                  ) : data.status === "cancelled" ? (
+                    <button
+                      type="button"
+                      className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
+                    >
+                      Details
+                    </button>
                   ) : (
                     <button
-                     type="button"
-                     className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
-                     >
+                      type="button"
+                      className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
+                    >
                       Cancel
-                  </button>
+                    </button>
                   )}
                 </div>
+
+                <div
+                  className={`${selectedRoom === data.id && wantsToConfirm ? "flex" : "hidden"} fixed inset-0 z-50 items-center justify-center bg-black/20 rounded-lg backdrop-blur-md p-4`}
+                  onClick={() => setWantsToConfirm(false)}
+                >
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-[92vw] max-w-[420px] rounded-2xl bg-white/95 backdrop-blur-md border border-white/60 shadow-xl p-6"
+                  >
+                    <div className="flex items-start gap-4">
+                      <span className="shrink-0 inline-flex h-10 w-10 items-center justify-center rounded-full bg-neutral-900 text-white text-base font-bold">
+                        ?
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-bold tracking-tight">
+                          Confirm this booking?
+                        </h3>
+                        <p className="mt-1 text-sm text-neutral-600">
+                          Room #{data.room_id} on{" "}
+                          <span className="font-medium text-neutral-800">
+                            {new Date(data.start_time).toLocaleDateString(undefined, {
+                              weekday: "short",
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>{" "}
+                          at{" "}
+                          <span className="font-medium text-neutral-800">
+                            {new Date(data.start_time).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                            {" – "}
+                            {new Date(data.end_time).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          . Once confirmed, the slot is locked in.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setWantsToConfirm(false)}
+                        className="flex-1 rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => confirmBooking(data.id)}
+                        type="button"
+                        className="flex-1 rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer"
+                      >
+                        Confirm
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
+
+
               </motion.article>
+              
             ))}
+
+            {/* --- This is the section to display a success message once the user successfully confirms a booking --- */}
+            <div
+              className={`${confirmed ? "flex" : "hidden"} fixed inset-0 z-50 items-center justify-center bg-black/20 backdrop-blur-md p-4`}
+              onClick={() => {
+                setConfirmed(false);
+                setWantsToConfirm(false);
+                setSelectedRoom(0);
+              }}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-[92vw] max-w-[420px] rounded-2xl bg-white/95 backdrop-blur-md border border-white/60 shadow-xl px-6 py-10 flex flex-col items-center text-center"
+              >
+                <div className="h-14 w-14 rounded-full bg-neutral-900 text-white flex items-center justify-center text-2xl font-bold">
+                  ✓
+                </div>
+                <h3 className="mt-5 text-lg font-bold tracking-tight">
+                  Booking confirmed
+                </h3>
+                <p className="mt-2 text-sm text-neutral-600 max-w-[320px]">
+                  Your room is locked in. You can find it in your bookings any time.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmed(false);
+                    setWantsToConfirm(false);
+                    setSelectedRoom(0);
+                  }}
+                  className="mt-6 rounded-full bg-neutral-900 text-white px-6 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer"
+                >
+                  Done
+                </button>
+              </motion.div>
+            </div>
+
+
           </div>
         ) : (
           <div className="rounded-2xl border border-dashed border-neutral-300 bg-white/60 p-10 text-center">
