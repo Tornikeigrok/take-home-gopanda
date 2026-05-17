@@ -163,6 +163,7 @@ app.get("/userInfo", tokenAuthentication, async(req, res, next)=>{
     }
 })
 
+
 //--- This is for user's profile. Return all the rooms they have scheduled, if any ---//
 app.get("/usersScheduledRooms", tokenAuthentication, async(req, res, next)=>{
     const {email} = req.user;
@@ -182,19 +183,55 @@ app.get("/usersScheduledRooms", tokenAuthentication, async(req, res, next)=>{
 //--- This endpoint returns a list of all the rooms to dispaly on users' dashboards  ---//
 app.get("/roomList", tokenAuthentication, async(req, res, next)=>{
     try {
-        
          const rooms = await pool.query(`
             SELECT DISTINCT ON (r.id) r.*, b.status
             FROM rooms r
             LEFT JOIN bookings b ON r.id = b.room_id
             ORDER BY r.id, b.start_time DESC NULLS LAST
             `);
-
         res.status(200).json({success: true, message: "Rooms found, returning all rooms", rooms: rooms.rows})
     } catch (error) {
         next(error);
     }
 })
+
+//--- This endpoint receives the date, start_time, end_time, user_id, etc from frontend to request a booking ---//
+app.post("/requestBooking", tokenAuthentication, async(req, res, next)=>{
+    const {email} = req.user;
+    const {room_id, start_time, end_time} = req.body;
+    try {   
+        //First get the ID
+        const userInfo = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
+        const userId = userInfo.rows[0].id;
+
+
+        //Before inserting, check against tentative and confirmed bookings only
+        const checkRoomSchedules = await pool.query(`
+            SELECT * FROM bookings WHERE room_id = $1
+            AND status IN ('tentative', 'confirmed')
+            AND start_time < $3
+            AND end_time > $2
+            `, [room_id, start_time, end_time]);
+
+        if(checkRoomSchedules.rows.length > 0){
+            return res.status(409).json({ success: false, message: "Time slot conflicts with an existing booking.", conflicts: checkRoomSchedules.rows });
+        }
+
+        const booking = await pool.query(`INSERT INTO bookings (user_id, room_id, start_time, end_time, expires_at) 
+            VALUES ($1, $2, $3, $4, $5)
+            `, [userId, 
+                room_id, 
+                start_time, 
+                end_time, 
+                new Date(Date.now() + 10 * 60 * 1000)
+        ]);
+        res.status(201).json({ success: true, message: "Tentative booking created", booking: booking.rows[0]});
+    } catch (error) {
+        next(error);
+    }
+    
+})
+
 
 
 //--- This returns the booking details for a specific, selected room from bookings table ---//
