@@ -229,9 +229,7 @@ app.post("/requestBooking", tokenAuthentication, async(req, res, next)=>{
     } catch (error) {
         next(error);
     }
-    
-})
-
+});
 
 
 //--- This returns the booking details for a specific, selected room from bookings table ---//
@@ -244,6 +242,37 @@ app.get("/roomScheduleInfo/:id", tokenAuthentication, async(req, res, next)=>{
         next(error);
     }
 })
+
+
+//--- Confirm a room booking and update the BD ---//
+app.patch("/confirmBooking/:id", tokenAuthentication, async(req, res, next)=>{
+    const {id} = req.params;
+    try {
+        const confirmation = await pool.query(`
+            UPDATE bookings SET status = $1 WHERE id = $2 
+            AND status = $3 
+            AND expires_at > NOW()
+            RETURNING *
+            `, ['confirmed', id, 'tentative']);
+        res.status(200).json({success: true, message: "Booking successfully confirmed.", bookingConfirmation: confirmation.rows[0]});
+    } catch (error) {
+        next(error);
+    }
+});
+
+
+
+//--- This is the worker that periodically checks the DB and updates bookings statuses
+const expiryJob = setInterval(async()=>{
+  await pool.query(`
+    UPDATE bookings 
+    SET status = 'cancelled' 
+    WHERE expires_at < NOW() 
+    AND status = 'tentative'`);
+}, 30000);
+
+process.on('SIGTERM', ()=> clearInterval(expiryJob));
+process.on('SIGINT', ()=> clearInterval(expiryJob));
 
 
 // --- Error Block for readability and reusability --- ///
