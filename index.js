@@ -164,18 +164,36 @@ app.get("/userInfo", tokenAuthentication, async(req, res, next)=>{
 })
 
 
-//--- Room endpoints - These andpoints all require tokens ---//
 
-//This endpoint returns a list of all the rooms to dispaly on users' dashboards 
+//--- Room endpoints - These andpoints all require tokens ---//
+//--- This endpoint returns a list of all the rooms to dispaly on users' dashboards  ---//
 app.get("/roomList", tokenAuthentication, async(req, res, next)=>{
     try {
-        const rooms = await pool.query("SELECT * FROM rooms");
+        
+         const rooms = await pool.query(`
+            SELECT DISTINCT ON (r.id) r.*, b.status
+            FROM rooms r
+            LEFT JOIN bookings b ON r.id = b.room_id
+            ORDER BY r.id, b.start_time DESC NULLS LAST
+            `);
+
         res.status(200).json({success: true, message: "Rooms found, returning all rooms", rooms: rooms.rows})
     } catch (error) {
         next(error);
     }
 })
 
+
+//--- This returns the booking details for a specific, selected room from bookings table ---//
+app.get("/roomScheduleInfo/:id", tokenAuthentication, async(req, res, next)=>{
+    const {id} = req.params;
+    try {  
+        const roomSchedules = await pool.query(`SELECT * FROM bookings WHERE room_id = $1`, [id]);
+        res.status(200).json({success: true, room_schedule_details: roomSchedules.rows});
+    } catch (error) {
+        next(error);
+    }
+})
 
 
 // --- Error Block for readability and reusability --- ///
