@@ -121,7 +121,6 @@ app.post("/userLogin", async(req, res, next)=>{ // Fixed: changed GET to POST, b
             SECRET_STRING,
             { expiresIn: '24h' }
         );
-
         res.status(200).json({success: true, message: "User authorized!", token});
     } catch (error) {
         next(error);
@@ -147,6 +146,31 @@ app.post("/resetPassword", async(req, res, next)=>{
         await pool.query("UPDATE users SET password_hash = $1 WHERE email = $2", [encryptedPassword, email]); // Fixed: pool.query() not pool(), and hash the password
 
         res.status(200).json({success: true, message: "Password updated successfully"});
+    } catch (error) {
+        next(error);
+    }
+})
+
+//--- This is the endpoint that returns the current logged in user ---//
+app.get("/userInfo", tokenAuthentication, async(req, res, next)=>{
+    const {email} = req.user;
+    try {
+        const currUser = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
+        const user = currUser.rows[0];
+        res.status(200).json({success: true, message: "Sending the current user's info", userName: user.name, userEml: user.email});
+    } catch (error) {
+        next(error);
+    }
+})
+
+
+//--- Room endpoints - These andpoints all require tokens ---//
+
+//This endpoint returns a list of all the rooms to dispaly on users' dashboards 
+app.get("/roomList", tokenAuthentication, async(req, res, next)=>{
+    try {
+        const rooms = await pool.query("SELECT * FROM rooms");
+        res.status(200).json({success: true, message: "Rooms found, returning all rooms", rooms: rooms.rows})
     } catch (error) {
         next(error);
     }
