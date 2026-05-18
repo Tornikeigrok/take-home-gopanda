@@ -157,7 +157,7 @@ app.get("/userInfo", tokenAuthentication, async(req, res, next)=>{
     try {
         const currUser = await pool.query(`SELECT * FROM users WHERE email = $1`, [email]);
         const user = currUser.rows[0];
-        res.status(200).json({success: true, message: "Sending the current user's info", userName: user.name, userEml: user.email});
+        res.status(200).json({success: true, message: "Sending the current user's info", userName: user.name, userEml: user.email, role: user.role});
     } catch (error) {
         next(error);
     }
@@ -219,13 +219,14 @@ app.post("/requestBooking", tokenAuthentication, async(req, res, next)=>{
 
         const booking = await pool.query(`INSERT INTO bookings (user_id, room_id, start_time, end_time, expires_at) 
             VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
             `, [userId, 
                 room_id, 
                 start_time, 
                 end_time, 
                 new Date(Date.now() + 10 * 60 * 1000)
         ]);
-        res.status(201).json({ success: true, message: "Tentative booking created", booking: booking.rows[0]});
+        res.status(201).json({ success: true, message: "Tentative booking created", bookDetails: booking.rows[0]});
     } catch (error) {
         next(error);
     }
@@ -238,6 +239,18 @@ app.get("/roomScheduleInfo/:id", tokenAuthentication, async(req, res, next)=>{
     try {  
         const roomSchedules = await pool.query(`SELECT * FROM bookings WHERE room_id = $1`, [id]);
         res.status(200).json({success: true, room_schedule_details: roomSchedules.rows});
+    } catch (error) {
+        next(error);
+    }
+});
+
+
+//--- Endpoint to allow users to cancel their confirmed ---//
+app.post("/cancelBooking", tokenAuthentication, async(req, res, next)=>{
+    const {id} = req.body;
+    try {
+        await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [id]);
+        res.status(200).json({success: true, message: "Booking Successfully cancelled."});
     } catch (error) {
         next(error);
     }
@@ -283,8 +296,6 @@ app.use((err, req, res, next) => {
       message: err.message || "Internal server error"
    });
 });
-
-
 
 app.listen(4001, ()=>{
     console.log("Server is running on: http://localhost:4001/");
