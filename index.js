@@ -288,6 +288,63 @@ process.on('SIGTERM', ()=> clearInterval(expiryJob));
 process.on('SIGINT', ()=> clearInterval(expiryJob));
 
 
+
+
+//------------------ ADMIN related endpoints -------------------//
+//--- This is the middleware that checks if currently logged in user is admin ---//
+const isAdmin = (req, res, next)=>{
+    if(req.user.role !== 'admin'){
+        return next(new StatusError("Forbidden", 403, "FORBIDDEN"));
+    }
+    next();
+}
+
+//--- For admin only to create a room ---//
+app.post("/createRoomAdmin", tokenAuthentication, isAdmin, async(req, res, next)=>{
+    const {name, capacity, purpose} = req.body;
+    try {
+        if(capacity > 20){
+            return next(new StatusError("Room capacity cannot exceed 20", 422, "CAPACITY_EXCEEDED"));
+        }
+        await pool.query("INSERT INTO rooms (name, capacity, purpose) VALUES ($1, $2, $3)", 
+            [name, capacity, purpose]);
+
+        res.status(200).json({success: true, message: "Admin Successfully created a room."});
+    } catch (error) {
+        next(error);
+    }
+});
+//--- For admin only to delete a room ---//
+app.delete("/deleteRoomAdmin/:id", tokenAuthentication, isAdmin, async(req, res, next)=>{
+    const {id} = req.params;
+    try {
+        await pool.query("DELETE FROM rooms WHERE id = $1", [id]);
+        res.status(200).json({success: true, message: "Admin successfully removed a room."});
+    } catch (error) {
+        next(error);
+    }
+});
+
+//--- For admin only to update a room ---//
+app.patch("/updateRoomAdmin/:id", tokenAuthentication, isAdmin, async(req, res, next)=>{
+    const {id} = req.body;
+    const {name, capacity, purpose} = req.params;
+    try {
+        const update = await pool.query(`
+            UPDATE rooms 
+            SET name = COALESCE($1, name),
+            capacity = COALESCE($2, capacity),
+            purpose = COALESCE($3, purpose)
+            WHERE id = $4
+            RETURNING *
+            `, [name, capacity, purpose, id]);
+        res.status(200).json({success: true, message: "Admin successfully updated a room. Returning updated room", updatedRoom: update.rows[0]});
+    } catch (error) {
+        next(error);
+    }
+})
+
+
 // --- Error Block for readability and reusability --- ///
 app.use((err, req, res, next) => {
    res.status(err.statusCode || 500).json({
