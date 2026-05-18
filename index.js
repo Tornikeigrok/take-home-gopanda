@@ -275,20 +275,6 @@ app.patch("/confirmBooking/:id", tokenAuthentication, async(req, res, next)=>{
 
 
 
-//--- This is the worker that periodically checks the DB and updates bookings statuses
-const expiryJob = setInterval(async()=>{
-  await pool.query(`
-    UPDATE bookings 
-    SET status = 'cancelled' 
-    WHERE expires_at < NOW() 
-    AND status = 'tentative'`);
-}, 30000);
-
-process.on('SIGTERM', ()=> clearInterval(expiryJob));
-process.on('SIGINT', ()=> clearInterval(expiryJob));
-
-
-
 
 //------------------ ADMIN related endpoints -------------------//
 //--- This is the middleware that checks if currently logged in user is admin ---//
@@ -325,16 +311,17 @@ app.delete("/deleteRoomAdmin/:id", tokenAuthentication, isAdmin, async(req, res,
     }
 });
 
+
 //--- For admin only to update a room ---//
 app.patch("/updateRoomAdmin/:id", tokenAuthentication, isAdmin, async(req, res, next)=>{
-    const {id} = req.body;
-    const {name, capacity, purpose} = req.params;
+    const {id} = req.params;
+    const {name, capacity, purpose} = req.body;
     try {
         const update = await pool.query(`
             UPDATE rooms 
             SET name = COALESCE($1, name),
             capacity = COALESCE($2, capacity),
-            purpose = COALESCE($3, purpose)
+            purpose  =  COALESCE($3, purpose)
             WHERE id = $4
             RETURNING *
             `, [name, capacity, purpose, id]);
@@ -343,6 +330,19 @@ app.patch("/updateRoomAdmin/:id", tokenAuthentication, isAdmin, async(req, res, 
         next(error);
     }
 })
+
+
+//--- This is the worker that periodically checks the DB and updates bookings statuses
+const expiryJob = setInterval(async()=>{
+  await pool.query(`
+    UPDATE bookings 
+    SET status = 'cancelled' 
+    WHERE expires_at < NOW() 
+    AND status = 'tentative'`);
+}, 30000);
+
+process.on('SIGTERM', ()=> clearInterval(expiryJob));
+process.on('SIGINT', ()=> clearInterval(expiryJob));
 
 
 // --- Error Block for readability and reusability --- ///
