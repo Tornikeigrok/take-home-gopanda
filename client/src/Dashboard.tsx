@@ -373,6 +373,30 @@ export const Dashboard = () => {
     }
   }
 
+  // ---- Admin API call to update a room ---//
+  const [currUpdateRoom, setCurUpdateRoom] = useState<number | null>(null);
+  const adminUpdateRoom = async(roomId: number)=>{
+    const token = Cookies.get("access-token");
+    try {
+        const res = await fetch(getUrl(`updateRoomAdmin/${roomId}`), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token, "Content-Type" : "application/json"},
+        body: JSON.stringify({
+            name: newRoomName,
+            capacity: newRoomCapacity,
+            purpose: newRoomPurpose
+        })
+      });
+      const data = await res.json();
+      console.log(data);
+      toast.success("You've successfully updated a room.");
+      displayAllRooms();
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  }
+
   return (
     <div className="min-h-screen text-neutral-900">
        
@@ -567,6 +591,13 @@ export const Dashboard = () => {
                 {userInfo?.role === 'admin' && (
                   <div className="mt-3 flex items-center gap-2">
                     <button
+                      onClick={() => {
+                        setNewRoomName(data.name);
+                        setNewRoomCapacity(String(data.capacity));
+                        setNewRoomPurpose(data.purpose);
+                        setCurUpdateRoom(data.id);
+                        setOpenCreateModal(true);
+                      }}
                       type="button"
                       className="flex-1 rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 transition-all cursor-pointer"
                     >
@@ -587,6 +618,7 @@ export const Dashboard = () => {
         )}
       </main>
 
+
       {/* --- This is the Room modal section --- */}
       {openCreateModal && (
         <section
@@ -602,24 +634,38 @@ export const Dashboard = () => {
           >
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>
-                <h2 className="text-xl font-bold tracking-tight">New room</h2>
-                <p className="mt-0.5 text-xs text-neutral-500">Add a room admins can publish.</p>
+                <h2 className="text-xl font-bold tracking-tight">
+                  {currUpdateRoom ? "Update room" : "New room"}
+                </h2>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  {currUpdateRoom ? "Edit the values and save." : "Add a room admins can publish."}
+                </p>
               </div>
               <button
                 type="button"
-                onClick={() => setOpenCreateModal(false)}
+                onClick={() => {
+                  setOpenCreateModal(false);
+                  setCurUpdateRoom(null);
+                }}
                 className="flex items-center justify-center border border-neutral-300 hover:border-neutral-400 rounded-full w-7 h-7 text-xs cursor-pointer transition-colors"
               >
                 X
               </button>
             </div>
 
+
+           {/* --- This is update room section --- */}
             <form
               className="flex flex-col gap-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                adminCreateRoom();
+                if (currUpdateRoom) {
+                  adminUpdateRoom(currUpdateRoom);
+                } else {
+                  adminCreateRoom();
+                }
                 setOpenCreateModal(false);
+                setCurUpdateRoom(null);
                 setNewRoomName("");
                 setNewRoomCapacity("");
                 setNewRoomPurpose("");
