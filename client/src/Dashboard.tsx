@@ -326,6 +326,7 @@ export const Dashboard = () => {
         toast.error("Network error. Check your connection.");
       }
     };
+    // ---- Admin API call to delete a room ---//
   const adminDeleteRoom = async (id: number) => {
     const token = Cookies.get("access-token");
     try {
@@ -343,9 +344,38 @@ export const Dashboard = () => {
     }
   };
 
+
+
+  // ---- Admin API call to create a room ---//
+  const [newRoomName, setNewRoomName] = useState("");
+  const [newRoomCapacity, setNewRoomCapacity] = useState("");
+  const [newRoomPurpose, setNewRoomPurpose] = useState("");
+  const [openCreateModal, setOpenCreateModal] = useState(false);
+  const adminCreateRoom = async()=>{
+     const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl(`createRoomAdmin`), {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type" : "application/json"},
+        body: JSON.stringify({
+            name: newRoomName,
+            capacity: newRoomCapacity,
+            purpose: newRoomPurpose
+        })
+      });
+      const data = await res.json();
+      console.log(data);
+      displayAllRooms();
+      toast.success("You've successfully created a room.")
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  }
+
   return (
     <div className="min-h-screen text-neutral-900">
-        <Toaster position="top-center"/>
+       
       <header className="sticky top-0 z-20 backdrop-blur-md bg-white/60 border-b border-white/40">
         <nav className="w-11/12 max-w-6xl mx-auto flex items-center justify-between py-3 md:py-4">
           <div className="flex items-center gap-2">
@@ -456,6 +486,7 @@ export const Dashboard = () => {
             {userInfo?.role === "admin" && (
               <button
                 type="button"
+                onClick={() => setOpenCreateModal(true)}
                 className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer shadow-sm"
               >
                 <span className="text-base leading-none">+</span>
@@ -557,6 +588,100 @@ export const Dashboard = () => {
       </main>
 
       {/* --- This is the Room modal section --- */}
+      {openCreateModal && (
+        <section
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-md p-4"
+          onClick={() => setOpenCreateModal(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-[92vw] max-w-[420px] rounded-2xl bg-white/95 backdrop-blur-md border border-white/60 shadow-xl p-6"
+          >
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-bold tracking-tight">New room</h2>
+                <p className="mt-0.5 text-xs text-neutral-500">Add a room admins can publish.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenCreateModal(false)}
+                className="flex items-center justify-center border border-neutral-300 hover:border-neutral-400 rounded-full w-7 h-7 text-xs cursor-pointer transition-colors"
+              >
+                X
+              </button>
+            </div>
+
+            <form
+              className="flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                adminCreateRoom();
+                setOpenCreateModal(false);
+                setNewRoomName("");
+                setNewRoomCapacity("");
+                setNewRoomPurpose("");
+              }}
+            >
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-neutral-700">Name</span>
+                <input
+                  required
+                  type="text"
+                  placeholder="e.g. Strategy Room"
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-neutral-700">Capacity</span>
+                <input
+                  required
+                  type="number"
+                  min={1}
+                  placeholder="e.g. 6"
+                  value={newRoomCapacity}
+                  onChange={(e) => setNewRoomCapacity(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-neutral-700">Purpose</span>
+                <input
+                  required
+                  type="text"
+                  placeholder="What's this room for?"
+                  value={newRoomPurpose}
+                  onChange={(e) => setNewRoomPurpose(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all"
+                />
+              </label>
+
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setOpenCreateModal(false)}
+                  className="flex-1 rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer"
+                >
+                  Create
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </section>
+      )}
+
       {openDetailsModal && (
         <section
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-md p-4"
