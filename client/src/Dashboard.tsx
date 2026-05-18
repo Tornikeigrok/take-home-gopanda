@@ -4,7 +4,8 @@ import { useNavigate } from "react-router-dom";
 import Cookies from "js-cookie";
 import { getUrl } from "./ApiCall";
 import { motion } from "framer-motion";
-import toast from "react-hot-toast";
+import toast,{Toaster} from "react-hot-toast";
+
 
 //--- Interface for the result of returning all rooms
 interface roomsRule {
@@ -38,6 +39,7 @@ interface scheduleInfoRule {
 interface UserInfo {
   userEml?: string;
   userName?: string;
+  role?: string;
 }
 
 export const Dashboard = () => {
@@ -74,6 +76,7 @@ export const Dashboard = () => {
         }
         const data = await res.json();
         setUserInfo(data);
+        console.log(data);
       } catch (error) {
         console.error(error);
         toast.error("Network error. Check your connection.");
@@ -294,8 +297,55 @@ export const Dashboard = () => {
     ? userInfo.userName.trim().charAt(0).toUpperCase()
     : "?";
 
+
+    //--------- Admin related API calls --------//
+
+    //--- Returning all rooms again so Updates are instant ---//
+     const displayAllRooms = async () => {
+      const token = Cookies.get("access-token");
+      try {
+        const res = await fetch(getUrl("roomList"), {
+          method: "GET",
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (res.status === 401) {
+          Cookies.remove("access-token");
+          toast.error("Session expired. Please log in again.");
+          navigate("/");
+          return;
+        }
+        if (!res.ok) {
+          toast.error("Couldn't load rooms. Please try again.");
+          return;
+        }
+        const data = await res.json();
+        console.log(data);
+        setRooms(data.rooms);
+      } catch (error) {
+        console.error(error);
+        toast.error("Network error. Check your connection.");
+      }
+    };
+  const adminDeleteRoom = async (id: number) => {
+    const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl(`deleteRoomAdmin/${id}`), {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      console.log(data);
+      displayAllRooms();
+      toast.success("You've successfully removed a room.")
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
+
   return (
     <div className="min-h-screen text-neutral-900">
+        <Toaster position="top-center"/>
       <header className="sticky top-0 z-20 backdrop-blur-md bg-white/60 border-b border-white/40">
         <nav className="w-11/12 max-w-6xl mx-auto flex items-center justify-between py-3 md:py-4">
           <div className="flex items-center gap-2">
@@ -380,7 +430,7 @@ export const Dashboard = () => {
               </div>
             </label>
 
-            <div className="flex flex-col gap-1.5 flex-1">
+            <div className="flex flex-col gap-1.5 flex-1 ">
               <span className="text-xs font-medium text-neutral-700">Status</span>
               <div className="inline-flex flex-wrap gap-1.5 rounded-full bg-neutral-100 border border-neutral-200 p-1 w-fit">
                 {statusOptions.map((opt) => {
@@ -401,8 +451,19 @@ export const Dashboard = () => {
                   );
                 })}
               </div>
+              
             </div>
+            {userInfo?.role === "admin" && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer shadow-sm"
+              >
+                <span className="text-base leading-none">+</span>
+                New room
+              </button>
+            )}
           </div>
+          
         </div>
 
 
@@ -471,6 +532,24 @@ export const Dashboard = () => {
                 >
                   {data.is_active ? "Book room" : "Unavailable"}
                 </button>
+
+                {userInfo?.role === 'admin' && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                    >
+                      Update
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => adminDeleteRoom(data.id)}
+                      className="flex-1 rounded-full border border-red-300 text-red-600 px-3 py-1.5 text-xs font-medium hover:bg-red-50 transition-all cursor-pointer"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </motion.article>
             ))}
           </div>
