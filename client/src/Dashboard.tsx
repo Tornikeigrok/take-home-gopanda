@@ -180,6 +180,11 @@ export const Dashboard = () => {
 
  const [tentativeRoomId, setTentativeRoomId] = useState<number | null>(null);
  const requestBooking = async(roomId: number)=>{
+    //--- Validate selected Start and End times to ensure they are within operating hours ---//
+    if(startTime < '09:00' || endTime > "17:00"){
+        toast.error("Bookings must be between 9 AM and 5 PM.");
+        return;
+    }
     const token = Cookies.get('access-token');
     setRequesting(true);
     setTimeConflict(false);
@@ -954,6 +959,8 @@ export const Dashboard = () => {
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-medium text-neutral-700">Start time</span>
                     <input
+                      min="09:00"
+                      max="17:00"
                       type="time"
                       value={startTime}
                       onChange={(e) => setStartTime(e.target.value)}
@@ -964,10 +971,11 @@ export const Dashboard = () => {
                   <label className="flex flex-col gap-1.5">
                     <span className="text-xs font-medium text-neutral-700">End time</span>
                     <input
+                      max="17:00"
                       type="time"
                       value={endTime}
                       onChange={(e) => setEndTime(e.target.value)}
-                      min={startTime || undefined}
+                      min={startTime || "09:00"}
                       className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
                                  focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
                     />
