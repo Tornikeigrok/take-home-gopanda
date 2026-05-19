@@ -443,15 +443,46 @@ export const Dashboard = () => {
       </header>
 
       <main className="w-11/12 max-w-6xl mx-auto px-2 py-10 md:py-14">
-        <div className="flex items-end justify-between flex-wrap gap-4 mb-8 md:mb-10">
+        <div className="flex items-end justify-between flex-wrap gap-4 mb-6 md:mb-8">
           <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
+              Dashboard
+            </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">
-              Available rooms
+              {userInfo?.userName ? `Welcome back, ${userInfo.userName.split(" ")[0]}` : "Available rooms"}
             </h1>
             <p className="mt-2 text-sm md:text-base text-neutral-600">
               Browse {rooms.length} room{rooms.length === 1 ? "" : "s"} and pick
               the one that fits your team.
             </p>
+          </div>
+          {userInfo?.role === "admin" && (
+            <span className="inline-flex items-center rounded-full bg-neutral-900 text-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider">
+              Admin
+            </span>
+          )}
+        </div>
+
+        {/* --- Quick stats strip --- */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
+          <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4">
+            <div className="text-xs font-medium text-neutral-500">Total rooms</div>
+            <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
+              {rooms.length}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4">
+            <div className="text-xs font-medium text-neutral-500">Active now</div>
+            <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
+              {rooms.filter((r) => r.is_active).length}
+            </div>
+          </div>
+          <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4 hidden md:block">
+            <div className="text-xs font-medium text-neutral-500">Largest capacity</div>
+            <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
+              {rooms.length > 0 ? Math.max(...rooms.map((r) => r.capacity)) : 0}
+              <span className="ml-1 text-sm font-medium text-neutral-500">people</span>
+            </div>
           </div>
         </div>
 
@@ -537,6 +568,15 @@ export const Dashboard = () => {
 
 
         {/* --- This section is displaying all the rooms. Also checks if there are no rooms to render text accordingly --- */}
+        <div className="flex items-baseline justify-between mb-4 md:mb-5">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-neutral-500">
+            Rooms
+          </h2>
+          <span className="text-xs text-neutral-500 tabular-nums">
+            Showing {filterRooms.length} of {rooms.length}
+          </span>
+        </div>
+
         {rooms.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 bg-white/60 p-10 text-center">
             <p className="text-neutral-600">No rooms available right now.</p>
