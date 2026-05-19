@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import Cookies from "js-cookie";
 import { getUrl } from "./ApiCall";
 import { motion } from "framer-motion";
-import toast from "react-hot-toast";
+import toast, { Toaster } from "react-hot-toast";
 
 interface bookingsRule {
   id: number;
@@ -21,6 +21,7 @@ interface bookingsRule {
 interface UserInfo {
   userEml?: string;
   userName?: string;
+  role?: string;
 }
 
 export const UserProfile = () => {
@@ -56,6 +57,7 @@ export const UserProfile = () => {
         }
         const data = await res.json();
         setUserInfo(data);
+        console.log(data);
       } catch (error) {
         console.error(error);
         toast.error("Network error. Check your connection.");
@@ -124,6 +126,7 @@ export const UserProfile = () => {
   //--- Confirm booking section ---//
   const [confirmed, setConfirmed] = useState(false);
   const [wantsToConfirm, setWantsToConfirm] = useState(false);
+  const [wantsToCancel, setWantsToCancel] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(0);
   const confirmBooking = async (id: number) => {
     const token = Cookies.get("access-token");
@@ -142,6 +145,35 @@ export const UserProfile = () => {
     }
   };
 
+  //--- Canel the booking Endpoint ---//
+  
+  const cancelBooking = async (id: number) => {
+    const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl(`cancelBooking`), {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json"},
+        body: JSON.stringify({
+            id: id
+        })
+      });
+      const data = await res.json();
+      console.log(data);
+      scheduledRooms();
+      toast.success("You have cancelled the meting");
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
+
+
+  //--- Display details of cancelled room ---//
+  const [displayDetails, setDisplayDetails] = useState(false);
+
+
+
+
   const statusPill = (status: string) => {
     const base =
       "inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider";
@@ -154,6 +186,7 @@ export const UserProfile = () => {
 
   return (
     <div className="min-h-screen text-neutral-900">
+       
       <header className="sticky top-0 z-20 backdrop-blur-md bg-white/60 border-b border-white/40">
         <nav className="w-11/12 max-w-6xl mx-auto flex items-center justify-between py-3 md:py-4">
           <button
@@ -300,14 +333,81 @@ export const UserProfile = () => {
                       Confirm
                     </button>
                   ) : data.status === "cancelled" ? (
-                    <button
-                      type="button"
-                      className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
-                    >
-                      Details
-                    </button>
+                    <div className="w-full">
+                      <button
+                        onClick={() => {
+                          setDisplayDetails(true);
+                          setSelectedRoom(data.id);
+                        }}
+                        type="button"
+                        className="w-full flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                      >
+                        Details
+                      </button>
+
+                      {/* --- Displaying cancelled room details --- */}
+                      <div
+                        className={`${selectedRoom === data.id && displayDetails ? "flex" : "hidden"} fixed inset-0 z-50 items-center justify-center bg-black/20 rounded-lg backdrop-blur-md p-4`}
+                        onClick={() => setDisplayDetails(false)}
+                      >
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-[92vw] max-w-[350px] rounded-2xl bg-white/95 backdrop-blur-md border border-white/60 shadow-xl p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <h3 className="text-base font-bold tracking-tight">
+                              Booking #{data.id}
+                            </h3>
+                            <span className={statusPill(data.status)}>{data.status}</span>
+                          </div>
+
+                          <dl className="rounded-xl border border-neutral-200/80 divide-y divide-neutral-200/80 text-xs">
+                            <div className="flex items-center justify-between px-3 py-1.5">
+                              <dt className="text-neutral-500">Created</dt>
+                              <dd className="font-medium">
+                                {new Date(data.created_at).toLocaleString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </dd>
+                            </div>
+                            <div className="flex items-center justify-between px-3 py-1.5">
+                              <dt className="text-neutral-500">Updated</dt>
+                              <dd className="font-medium">
+                                {new Date(data.updated_at).toLocaleString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </dd>
+                            </div>
+                            <div className="flex items-center justify-between px-3 py-1.5">
+                              <dt className="text-neutral-500">Room ID</dt>
+                              <dd className="font-medium">{data.room_id}</dd>
+                            </div>
+                          </dl>
+                          <button
+                            type="button"
+                            onClick={() => setDisplayDetails(false)}
+                            className="mt-3 w-full rounded-full bg-neutral-900 text-white px-5 py-1.5 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer"
+                          >
+                            Close
+                          </button>
+                        </motion.div>
+                      </div>
+                    </div>
                   ) : (
                     <button
+                      onClick={() => {
+                        setWantsToCancel(true);
+                        setSelectedRoom(data.id);
+                      }}
                       type="button"
                       className={` flex-1 rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer`}
                     >
@@ -380,6 +480,75 @@ export const UserProfile = () => {
                   </motion.div>
                 </div>
 
+                
+
+                {/* --- Cancel-this-booking confirmation modal --- */}
+                <div
+                  className={`${selectedRoom === data.id && wantsToCancel ? "flex" : "hidden"} fixed inset-0 z-50 items-center justify-center bg-black/20 rounded-lg backdrop-blur-md p-4`}
+                  onClick={() => setWantsToCancel(false)}
+                >
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-[92vw] max-w-[420px] rounded-2xl bg-white/95 backdrop-blur-md border border-white/60 shadow-xl p-6"
+                  >
+                    <div className="flex items-start gap-4">
+                      <span className="shrink-0 inline-flex h-10 w-10 items-center justify-center rounded-full bg-red-50 text-red-600 border border-red-200 text-base font-bold">
+                        !
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-bold tracking-tight">
+                          Cancel this booking?
+                        </h3>
+                        <p className="mt-1 text-sm text-neutral-600">
+                          Room #{data.room_id} on{" "}
+                          <span className="font-medium text-neutral-800">
+                            {new Date(data.start_time).toLocaleDateString(undefined, {
+                              weekday: "short",
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>{" "}
+                          at{" "}
+                          <span className="font-medium text-neutral-800">
+                            {new Date(data.start_time).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                            {" – "}
+                            {new Date(data.end_time).toLocaleTimeString(undefined, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          . This can't be undone.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setWantsToCancel(false)}
+                        className="flex-1 rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                      >
+                        Keep it
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          cancelBooking(data.id);
+                          setWantsToCancel(false);
+                        }}
+                        className="flex-1 rounded-full bg-red-600 text-white px-5 py-2 text-sm font-medium hover:bg-red-700 transition-all cursor-pointer"
+                      >
+                        Yes, cancel
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
 
               </motion.article>
               
