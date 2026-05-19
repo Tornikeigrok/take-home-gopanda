@@ -200,6 +200,17 @@ app.post("/requestBooking", tokenAuthentication, async(req, res, next)=>{
     const {email} = req.user;
     const {room_id, start_time, end_time} = req.body;
     try {   
+        
+        // --- Extract the times for validation --- //
+        const start = new Date(start_time);
+        const end = new Date(end_time);
+        const startHr = start.getHours();
+        const endHr = end.getHours();
+        if(startHr < 9 || endHr > 17 || (endHr === 17 && end.getMinutes() > 0)){
+            return next(new StatusError("Selected times are outside operating hours", 422, "OUTSIDE_OPERATING_HOURS"));
+        }
+
+
         //First get the ID
         const userInfo = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
         const userId = userInfo.rows[0].id;
