@@ -200,7 +200,14 @@ app.post("/requestBooking", tokenAuthentication, async(req, res, next)=>{
     const {email} = req.user;
     const {room_id, start_time, end_time} = req.body;
     try {   
-        
+
+        //--- Validate days as well and prevent bookings on the weekend ---//
+        const sentDate = new Date(start_time);
+        const getDay = sentDate.getDay();
+        if(getDay === 0 || getDay === 6){
+           return next(new StatusError("Bookings are closed on the weekends.", 422, "BOOKINGS_ON_WEEKENDS"));
+        }
+
         // --- Extract the times for validation --- //
         const start = new Date(start_time);
         const end = new Date(end_time);
