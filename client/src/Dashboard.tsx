@@ -180,11 +180,21 @@ export const Dashboard = () => {
 
  const [tentativeRoomId, setTentativeRoomId] = useState<number | null>(null);
  const requestBooking = async(roomId: number)=>{
+    
+    //--- Add Day validation to flag bookings on weekends before sending request to the backend ---//
+    const dt = new Date(selectedDate);
+
+    if(dt.getDay() === 0 || dt.getDay() === 6){
+         toast.error("Bookings are closed on the weekends.");
+         return;
+    }
+
     //--- Validate selected Start and End times to ensure they are within operating hours ---//
     if(startTime < '09:00' || endTime > "17:00"){
         toast.error("Bookings must be between 9 AM and 5 PM.");
         return;
     }
+
     const token = Cookies.get('access-token');
     setRequesting(true);
     setTimeConflict(false);
@@ -304,7 +314,6 @@ export const Dashboard = () => {
 
 
     //--------- Admin related API calls --------//
-
     //--- Returning all rooms again so Updates are instant ---//
      const displayAllRooms = async () => {
       const token = Cookies.get("access-token");
@@ -753,6 +762,7 @@ export const Dashboard = () => {
                 <p className="mt-0.5 text-xs text-neutral-500">
                   Schedule and availability
                 </p>
+                <p className="mt-2 font-bold text-xs text-neutral-500">Please note that bookings are operational from 9AM-5PM, and are closed on the weekends.</p>
               </div>
               <button
                 type="button"
