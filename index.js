@@ -35,12 +35,25 @@ const io = new Server(server, {
 });
 app.set("io", io);
 
+//--- Redis client --- //
+const redis = require('redis');
+const redisClient = redis.createClient({
+  socket: { reconnectStrategy: false }
+});
+
+redisClient.on('error', (err)=> console.error('Redis error: ', err.message));
+//--- Add catch as this is the top of commonJS, so the little delay is negligable ---//
+redisClient.connect().catch((err)=>{
+  console.error('Redis connection has failed: ', err.message);
+});
+
+
 //--- Status errors for API endpoints. A reusable function that extends Error class ---//
 class StatusError extends Error {
   constructor(message, statusCode, err) {
     super(message);
     this.statusCode = statusCode;
-    this.err = err;
+    this.code = err;
   }
 }
 
@@ -90,13 +103,20 @@ const tokenAuthentication = (req, res, next) => {
 //--- AUTH SECTION  --- This is the register endpoint ---//
 app.post("/registerUser", async (req, res, next) => {
   const { name, email, password } = req.body;
+
+  //--- Add redis key to track number of time user has tried registering ---//
+  const key = `registerFailed${email}`;
+  const attemptNumber = parseInt(await redisClient.get(key)) || 0;
+
+  if(attemptNumber >= 5){
+    return next(new StatusError("Too many registration requests", 429, "REDIS_LIMIT_REACHED"));
+  }
   try {
     //- First check if user already exists in the DB
     const existing = await pool.query("SELECT 1 FROM users WHERE email = $1", [
       email,
     ]);
     if (existing.rows.length > 0) {
-      // Fixed: for register we throw if user DOES exist, not if they don't
       throw new StatusError("User already exists", 409, "USER_ALREADY_EXISTS");
     }
 
@@ -109,11 +129,18 @@ app.post("/registerUser", async (req, res, next) => {
       [name, email, encryptedPassword, created_at],
     );
 
+    const token = jwt.sign({ email },SECRET_STRING, { expiresIn: "24h" },);
+
     //Finally, add the user to the DB - they have an account now
+    await redisClient.del(key);
     res
       .status(200)
-      .json({ success: true, message: "User successfully added to the DB" });
+      .json({ success: true, message: "User successfully added to the DB", token });
   } catch (error) {
+    if(error.statusCode === 409){
+      await redisClient.incr(key);
+      await redisClient.expire(key, 60);
+    }
     next(error);
   }
 });
@@ -122,6 +149,14 @@ app.post("/registerUser", async (req, res, next) => {
 app.post("/userLogin", async (req, res, next) => {
   // Fixed: changed GET to POST, body doesn't work on GET
   const { email, password } = req.body;
+
+  //--- Add redis key to track number of time user has tried logging in ---//
+  const key = `failedLogin${email}`;
+  const attemptNumber = parseInt(await redisClient.get(key)) || 0;
+  if(attemptNumber >= 5){
+    return next(new StatusError("Too many login requests", 429, "REDIS_LIMIT_REACHED"));
+  }
+
   try {
     // Check if the user/email exists in the DB
     const user = await emailExists(email); // Fixed: capture the returned user row
@@ -129,17 +164,21 @@ app.post("/userLogin", async (req, res, next) => {
     //If the user exists, perform validation
     const validatePassword = await bcrypt.compare(password, user.password_hash); // Fixed: use returned user object and correct column name
     if (!validatePassword) {
-      throw new StatusError("Password does not match!", 401, "UNAUTHORIZED");
+       throw new StatusError("Password does not match!", 401, "UNAUTHORIZED");
     }
-
     // Generate JWT token on successful login
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       SECRET_STRING,
       { expiresIn: "24h" },
     );
+    await redisClient.del(key);
     res.status(200).json({ success: true, message: "User authorized!", token });
   } catch (error) {
+    if(error.statusCode === 401 || error.statusCode === 404){
+         await redisClient.incr(key);
+         await redisClient.expire(key, 60);
+    }
     next(error);
   }
 });
@@ -221,12 +260,23 @@ app.get("/usersScheduledRooms", tokenAuthentication, async (req, res, next) => {
 //--- This endpoint returns a list of all the rooms to dispaly on users' dashboards  ---//
 app.get("/roomList", tokenAuthentication, async (req, res, next) => {
   try {
+    const cached = await redisClient.get('roomList');
+    if(cached){
+      return res.status(200)
+      .json({success: true,
+        message: "Returning rooms list from cache",
+        rooms: JSON.parse(cached),
+      });
+    }
+    
     const rooms = await pool.query(`
             SELECT DISTINCT ON (r.id) r.*, b.status
             FROM rooms r
             LEFT JOIN bookings b ON r.id = b.room_id
             ORDER BY r.id, b.start_time DESC NULLS LAST
             `);
+    
+    await redisClient.set('roomList', JSON.stringify(rooms.rows), {EX: 60});
     res
       .status(200)
       .json({
@@ -243,11 +293,18 @@ app.get("/roomList", tokenAuthentication, async (req, res, next) => {
 app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
   const { email } = req.user;
   const { room_id, start_time, end_time } = req.body;
+
+  const key = `requestBookingFailed${email}`;
+  const attemptNumber = parseInt(await redisClient.get(key)) || 0;
+  if(attemptNumber >= 3){
+      return next (new StatusError('Too many requests for a booking.', 429, "REDIS_BOOKING_REQUEST_LIMIT_REACHED"));
+  };
   try {
     //--- Validate days as well and prevent bookings on the weekend ---//
     const sentDate = new Date(start_time);
     const getDay = sentDate.getDay();
     if (getDay === 0 || getDay === 6) {
+
       return next(
         new StatusError(
           "Bookings are closed on the weekends.",
@@ -290,6 +347,8 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
     );
 
     if (checkRoomSchedules.rows.length > 0) {
+      await redisClient.incr(key);
+      await redisClient.expire(key, 60);
       return res
         .status(409)
         .json({
@@ -312,6 +371,7 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         new Date(Date.now() + 10 * 60 * 1000),
       ],
     );
+    await redisClient.del('roomList');
 
     //--- Emit after the request is successfully made ---//
     io.emit("booking:updated", {
@@ -324,6 +384,7 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
     });
 
 
+    await redisClient.del(key);
     res
       .status(201)
       .json({
@@ -377,6 +438,7 @@ app.post("/cancelBooking", tokenAuthentication, async (req, res, next) => {
       room_id: cancelConf.rows[0].room_id
     })
 
+    await redisClient.del('roomList');
 
     res
       .status(200)
@@ -420,6 +482,8 @@ app.patch(
       });
 
 
+      await redisClient.del('roomList');
+
       res
         .status(200)
         .json({
@@ -432,6 +496,9 @@ app.patch(
     }
   },
 );
+
+
+
 
 //------------------ ADMIN related endpoints -------------------//
 //--- This is the middleware that checks if currently logged in user is admin ---//
@@ -464,6 +531,8 @@ app.post(
         [name, capacity, purpose],
       );
 
+      await redisClient.del('roomList');
+
       res
         .status(200)
         .json({ success: true, message: "Admin Successfully created a room." });
@@ -481,6 +550,9 @@ app.delete(
     const { id } = req.params;
     try {
       await pool.query("DELETE FROM rooms WHERE id = $1", [id]);
+
+      await redisClient.del('roomList');
+
       res
         .status(200)
         .json({ success: true, message: "Admin successfully removed a room." });
@@ -510,6 +582,9 @@ app.patch(
             `,
         [name, capacity, purpose, id],
       );
+
+      await redisClient.del('roomList');
+
       res
         .status(200)
         .json({
@@ -525,13 +600,20 @@ app.patch(
 
 //--- This is the worker that periodically checks the DB and updates bookings statuses
 const expiryJob = setInterval(async () => {
-  await pool.query(`
+  const result = await pool.query(`
     UPDATE bookings 
     SET status = 'cancelled' 
     WHERE expires_at < NOW() 
-    AND status = 'tentative'`);
-}, 30000);
+    AND status = 'tentative' RETURNING *`);
 
+    //--- Invalidate cache as every 30 seconds it flips status accordingly ---//
+    if(result.rows.length > 0){
+      await redisClient.del('roomList');
+    }
+   
+
+}, 30000);
+// --- Listen for server restart or server kill and stop the background worker --- //
 process.on("SIGTERM", () => clearInterval(expiryJob));
 process.on("SIGINT", () => clearInterval(expiryJob));
 
