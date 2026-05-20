@@ -262,6 +262,7 @@ app.get("/roomList", tokenAuthentication, async (req, res, next) => {
   try {
     const cached = await redisClient.get('roomList');
     if(cached){
+      console.log("Cach got hit, returning from cache...");
       return res.status(200)
       .json({success: true,
         message: "Returning rooms list from cache",
@@ -277,6 +278,8 @@ app.get("/roomList", tokenAuthentication, async (req, res, next) => {
             `);
     
     await redisClient.set('roomList', JSON.stringify(rooms.rows), {EX: 60});
+
+    console.log("DB got hit, returning from DB...");
     res
       .status(200)
       .json({
@@ -289,22 +292,32 @@ app.get("/roomList", tokenAuthentication, async (req, res, next) => {
   }
 });
 
+
+
 //--- This endpoint receives the date, start_time, end_time, user_id, etc from frontend to request a booking ---//
 app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
+
   const { email } = req.user;
   const { room_id, start_time, end_time } = req.body;
 
   const key = `requestBookingFailed${email}`;
   const attemptNumber = parseInt(await redisClient.get(key)) || 0;
-  if(attemptNumber >= 3){
+  if(attemptNumber >= 5){
       return next (new StatusError('Too many requests for a booking.', 429, "REDIS_BOOKING_REQUEST_LIMIT_REACHED"));
-  };
+  }
+
+   //--- One deidcated connection for transactional ---//
+  const client = await pool.connect();
+
   try {
+    //--- Start the transaction ---//
+    await client.query('BEGIN');
+
     //--- Validate days as well and prevent bookings on the weekend ---//
     const sentDate = new Date(start_time);
-    const getDay = sentDate.getDay();
+    const getDay = sentDate.getUTCDay();
     if (getDay === 0 || getDay === 6) {
-
+      await client.query('ROLLBACK'); //If anything goes wrong, undo everything
       return next(
         new StatusError(
           "Bookings are closed on the weekends.",
@@ -313,13 +326,13 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         ),
       );
     }
-
     // --- Extract the times for validation --- //
     const start = new Date(start_time);
     const end = new Date(end_time);
     const startHr = start.getHours();
     const endHr = end.getHours();
     if (startHr < 9 || endHr > 17 || (endHr === 17 && end.getMinutes() > 0)) {
+      await client.query('ROLLBACK');
       return next(
         new StatusError(
           "Selected times are outside operating hours",
@@ -330,23 +343,25 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
     }
 
     //First get the ID
-    const userInfo = await pool.query("SELECT * FROM users WHERE email = $1", [
+    const userInfo = await client.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
     const userId = userInfo.rows[0].id;
 
     //Before inserting, check against tentative and confirmed bookings only
-    const checkRoomSchedules = await pool.query(
+    const checkRoomSchedules = await client.query(
       `
             SELECT * FROM bookings WHERE room_id = $1
             AND status IN ('tentative', 'confirmed')
             AND start_time < $3
             AND end_time > $2
+            FOR UPDATE
             `,
       [room_id, start_time, end_time],
     );
 
     if (checkRoomSchedules.rows.length > 0) {
+      await client.query('ROLLBACK');
       await redisClient.incr(key);
       await redisClient.expire(key, 60);
       return res
@@ -358,7 +373,7 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         });
     }
 
-    const booking = await pool.query(
+    const booking = await client.query(
       `INSERT INTO bookings (user_id, room_id, start_time, end_time, expires_at) 
             VALUES ($1, $2, $3, $4, $5)
             RETURNING *
@@ -371,6 +386,9 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         new Date(Date.now() + 10 * 60 * 1000),
       ],
     );
+    //--- Once request has been written to the DB, finish the transaction ---//
+    await client.query('COMMIT');
+
     await redisClient.del('roomList');
 
     //--- Emit after the request is successfully made ---//
@@ -393,9 +411,19 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         bookDetails: booking.rows[0],
       });
   } catch (error) {
+    //--- If anything goes wrong, undo everything ---//
+    await client.query('ROLLBACK');
     next(error);
+  }finally{
+    //--- After everything, release the client to prevent DB connections exhaustion ---//
+    client.release();
   }
 });
+
+
+
+
+
 
 io.on("connect", (socket) => {
   console.log("user connected: ", socket.id);
@@ -429,8 +457,8 @@ app.get(
 app.post("/cancelBooking", tokenAuthentication, async (req, res, next) => {
   const { id } = req.body;
   try {
-    const cancelConf = await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1 AND user_id = $2 RETURNING *", [
-      id, req.user.id
+    const cancelConf = await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1 RETURNING *", [
+      id
     ]);
 
     //--- Emit after the booking is successfully cancelled ---//
@@ -480,7 +508,6 @@ app.patch(
          room_id: confirmation.rows[0].room_id,
          bookingId: confirmation.rows[0].id
       });
-
 
       await redisClient.del('roomList');
 
@@ -610,12 +637,12 @@ const expiryJob = setInterval(async () => {
     if(result.rows.length > 0){
       await redisClient.del('roomList');
     }
-   
-
 }, 30000);
 // --- Listen for server restart or server kill and stop the background worker --- //
 process.on("SIGTERM", () => clearInterval(expiryJob));
 process.on("SIGINT", () => clearInterval(expiryJob));
+
+
 
 // --- Error Block for readability and reusability --- ///
 app.use((err, req, res, next) => {
