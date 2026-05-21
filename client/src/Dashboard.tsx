@@ -4,8 +4,8 @@ import { useNavigate } from "react-router-dom";
 import Cookies from "js-cookie";
 import { getUrl } from "./ApiCall";
 import { motion } from "framer-motion";
-import toast,{Toaster} from "react-hot-toast";
-
+import toast, { Toaster } from "react-hot-toast";
+import { io } from "socket.io-client";
 
 //--- Interface for the result of returning all rooms
 interface roomsRule {
@@ -37,10 +37,17 @@ interface scheduleInfoRule {
 }
 
 interface UserInfo {
+  userId?: number;
   userEml?: string;
   userName?: string;
   role?: string;
 }
+
+//--- Add errors for readability ---//
+const errors: Record<number, string> = {
+  401: "Session expired. Please log in again.",
+  422: "Cannot book on the weekends.",
+};
 
 export const Dashboard = () => {
   const navigate = useNavigate();
@@ -52,7 +59,6 @@ export const Dashboard = () => {
       navigate("/");
     }
   }, []);
- 
 
   //--- This API returns the current user's details to display and use for profile
   const [userInfo, setUserInfo] = useState<UserInfo | undefined>();
@@ -85,8 +91,6 @@ export const Dashboard = () => {
     currentUserInfo();
   }, []);
 
-
-
   //--- API call to fetch every room to display
   const [rooms, setRooms] = useState<roomsRule[]>([]);
   useEffect(() => {
@@ -118,15 +122,13 @@ export const Dashboard = () => {
     displayAllRooms();
   }, []);
 
-
   //--- This API returns the details for a specific, selected room, particularly details like schedules,  status, expiry date, etc
   const [openDetailsModal, setOpenDetailsModal] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<roomsRule | null>(null);
-  const [roomSchedule, setRoomSchedule] = useState<scheduleInfoRule | null>(null);
 
   //--- Prevent scroll while the schedule modal is displaying ---//
-  useEffect(()=>{
-    document.body.style.overflow = openDetailsModal ? 'hidden' : '';
+  useEffect(() => {
+    document.body.style.overflow = openDetailsModal ? "hidden" : "";
     if (!openDetailsModal) {
       setSuccessfulReq(false);
       setRequesting(false);
@@ -134,9 +136,10 @@ export const Dashboard = () => {
       setConflicts([]);
       setConfirmedBooking(false);
     }
-    return() => {document.body.style.overflow = ''}
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [openDetailsModal]);
-  
 
   //--- These are states for date, start_time, and end_time the user has selected
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -144,122 +147,148 @@ export const Dashboard = () => {
   const [endTime, setEndTime] = useState<string>("");
 
   //--- Return schedule details ---//
-  const roomDetails = async(id: number)=>{
-    const token = Cookies.get('access-token');
+  const [roomSchedule, setRoomSchedule] = useState<scheduleInfoRule | null>(
+    null,
+  );
+  const roomDetails = async (id: number) => {
+    const token = Cookies.get("access-token");
     try {
-        const res = await fetch(getUrl(`roomScheduleInfo/${id}`), {
-          method: "GET",
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (res.status === 401) {
-          Cookies.remove("access-token");
-          toast.error("Session expired. Please log in again.");
-          navigate("/");
-          return;
-        }
-        if (!res.ok) {
-          toast.error("Couldn't load room schedule.");
-          return;
-        }
-        const data = await res.json();
-        console.log(data);
-        setRoomSchedule(data);
-      } catch (error) {
-        console.error(error);
-        toast.error("Network error. Check your connection.");
+      const res = await fetch(getUrl(`roomScheduleInfo/${id}`), {
+        method: "GET",
+        headers: { Authorization: "Bearer " + token },
+      });
+      if (res.status === 401) {
+        Cookies.remove("access-token");
+        toast.error("Session expired. Please log in again.");
+        navigate("/");
+        return;
       }
-  }
+      if (!res.ok) {
+        toast.error("Couldn't load room schedule.");
+        return;
+      }
+      const data = await res.json();
+      console.log(data);
+      setRoomSchedule(data);
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
 
- // --- This is the call to request a room booking ---//
- const [successfulReq, setSuccessfulReq] = useState(false);
- const [timeConflict, setTimeConflict] = useState(false);
- const [conflicts, setConflicts] = useState<bookingRule[]>([]);
- const [requesting, setRequesting] = useState(false);
- const [confirmDate, setConfirmDate] = useState(Date.now());
- const [now, setNow] = useState(Date.now());
+  // --- This is the call to request a room booking ---//
+  const [successfulReq, setSuccessfulReq] = useState(false);
+  const [timeConflict, setTimeConflict] = useState(false);
+  const [conflicts, setConflicts] = useState<bookingRule[]>([]);
+  const [requesting, setRequesting] = useState(false);
+  const [confirmDate, setConfirmDate] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
 
- const [tentativeRoomId, setTentativeRoomId] = useState<number | null>(null);
- const requestBooking = async(roomId: number)=>{
-    
-    //--- Add Day validation to flag bookings on weekends before sending request to the backend ---//
-    const dt = new Date(selectedDate);
+  const [tentativeRoomId, setTentativeRoomId] = useState<number | null>(null);
+  const requestBooking = async (roomId: number) => {
+    if (!selectedDate || !startTime || !endTime) {
+      toast.error("Please fill in date and times.");
+      return;
+    }
 
-    if(dt.getDay() === 0 || dt.getDay() === 6){
-         toast.error("Bookings are closed on the weekends.");
-         return;
+    const startDateTime = new Date(`${selectedDate}T${startTime}:00`);
+
+    //--- Prevent bookings in the past ---//
+    if (startDateTime.getTime() < Date.now()) {
+      toast.error("You can't book a time in the past.");
+      return;
+    }
+
+    //--- Validate Requested times to prevent bookings on the weekends ---//
+    const [y, m, d] = selectedDate.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    if (dt.getDay() === 0 || dt.getDay() === 6) {
+      toast.error("Bookings are closed on the weekends.");
+      return;
     }
 
     //--- Validate selected Start and End times to ensure they are within operating hours ---//
-    if(startTime < '09:00' || endTime > "17:00"){
-        toast.error("Bookings must be between 9 AM and 5 PM.");
-        return;
+    if (
+      startTime < "09:00" ||
+      startTime > "17:00" ||
+      endTime < "09:00" ||
+      endTime > "17:00" ||
+      endTime <= startTime
+    ) {
+      toast.error(
+        "Bookings must be between 9 AM and 5 PM, and end after start.",
+      );
+      return;
     }
 
-    const token = Cookies.get('access-token');
+    const token = Cookies.get("access-token");
     setRequesting(true);
     setTimeConflict(false);
     setConflicts([]);
     try {
-        const res = await fetch(getUrl(`requestBooking`), {
-          method: "POST",
-          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json"},
-          body: JSON.stringify({
-            room_id: roomId,
-            start_time: `${selectedDate}T${startTime}:00`,
-            end_time: `${selectedDate}T${endTime}:00`,
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          console.log(data);
-          setSuccessfulReq(true);
-          setConfirmDate(Date.now() + 10 * 60 * 1000);
-          setNow(Date.now());
-          setTentativeRoomId(data.bookDetails.id);
-          console.log(data);
-        }
-        else if(res.status === 409){
-            const data = await res.json();
-            setTimeConflict(true);
-            setConflicts(data.conflicts ?? []);
-            return;
-        }
-        else if (res.status === 401) {
-          Cookies.remove("access-token");
-          toast.error("Session expired. Please log in again.");
-          navigate("/");
-          return;
-        }
-        else {
-          toast.error("Couldn't submit your booking. Please try again.");
-        }
-      } catch (error) {
-        console.error(error);
-        toast.error("Network error. Check your connection.");
-      } finally {
-        setRequesting(false);
+      const res = await fetch(getUrl(`requestBooking`), {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          room_id: roomId,
+          start_time: `${selectedDate}T${startTime}:00`,
+          end_time: `${selectedDate}T${endTime}:00`,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log(data);
+        setSuccessfulReq(true);
+        setConfirmDate(Date.now() + 10 * 60 * 1000);
+        setNow(Date.now());
+        setTentativeRoomId(data.bookDetails.id);
+        console.log(data);
+      } else if (res.status === 409) {
+        const data = await res.json();
+        setTimeConflict(true);
+        setConflicts(data.conflicts ?? []);
+        return;
+      } else if (res.status === 401) {
+        Cookies.remove("access-token");
+        toast.error(errors[401]);
+        navigate("/");
+        return;
+      } else if (res.status === 422) {
+        const data = await res.json();
+        console.log("error sent here:", data.message);
+        toast.error(data.message);
+        return;
+      } else {
+        toast.error("Couldn't submit your booking. Please try again.");
       }
-  }
- 
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    } finally {
+      setRequesting(false);
+    }
+  };
+
   //--- The 10 minute countdown ---//
-  useEffect(()=>{
-    if(!successfulReq) return;
+  useEffect(() => {
+    if (!successfulReq) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
-    return ()=> clearInterval(id);
+    return () => clearInterval(id);
   }, [successfulReq]);
-  //Get nice time formatting to display
+
+  //--- Get nice time formatting to display ---//
   const remainingMs = Math.max(0, confirmDate - now);
   const mm = String(Math.floor(remainingMs / 60000)).padStart(2, "0");
   const ss = String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, "0");
-
-
 
   //--- Clear any conflict warning when the user adjusts the date or time ---//
   useEffect(() => {
     setTimeConflict(false);
     setConflicts([]);
   }, [selectedDate, startTime, endTime]);
-
 
   //--- Confirm Booking section ---//
   const [confirmedBooking, setConfirmedBooking] = useState(false);
@@ -279,11 +308,48 @@ export const Dashboard = () => {
     }
   };
 
+  //--- Websocket Section ---//
+  useEffect(() => {
+    const socket = io("http://localhost:4001", {
+      auth: { token: Cookies.get("access-token") },
+    });
 
+    socket.on("connect", () => console.log("connected: ", socket.id));
 
-  const [sortByCapacity, setSortByCapacity] = useState<"none" | "asc" | "desc">("none");
+    socket.emit("userConnected: ", { token: Cookies.get("access-token") });
+
+    //--- Listen for booking requests ---//
+    socket.on("booking:updated", ({ room_id, user}) => {
+      console.log("some user updated a room, ", room_id);
+      roomDetails(room_id);
+      console.log("user request: ", user.name);
+    });
+
+    //--- Listen for confirmed bookings ---//
+    socket.on("user-confirmed-booking", ({ userName, room_id}) => {
+      console.log("user confirmed booking: ", userName);
+      roomDetails(room_id);
+    });
+
+    //--- Listen for confirmed booking cancellations ---//
+    socket.on("cancel:booking", ({ room_id }) => {
+      console.log("User cancelled a booking.");
+      roomDetails(room_id);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  //--- For room sorting ---//
+  const [sortByCapacity, setSortByCapacity] = useState<"none" | "asc" | "desc">(
+    "none",
+  );
   const [nameFilter, setNameFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "tentative" | "confirmed">("all");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "active" | "tentative" | "confirmed"
+  >("all");
 
   const uniqueRoomNames = Array.from(new Set(rooms.map((r) => r.name)));
 
@@ -294,6 +360,8 @@ export const Dashboard = () => {
     { value: "confirmed", label: "Confirmed" },
   ];
 
+
+  //--- Rooms filtering logic ---//
   const filterRooms = rooms
     .filter((r) => nameFilter === "all" || r.name === nameFilter)
     .filter((r) => {
@@ -302,45 +370,45 @@ export const Dashboard = () => {
       return r.status === statusFilter;
     })
     .sort((a, b) =>
-      sortByCapacity === "asc" ? a.capacity - b.capacity
-      : sortByCapacity === "desc" ? b.capacity - a.capacity
-      : 0
+      sortByCapacity === "asc"
+        ? a.capacity - b.capacity
+        : sortByCapacity === "desc"
+          ? b.capacity - a.capacity
+          : 0,
     );
-
 
   const profileInitial = userInfo?.userName
     ? userInfo.userName.trim().charAt(0).toUpperCase()
     : "?";
 
-
-    //--------- Admin related API calls --------//
-    //--- Returning all rooms again so Updates are instant ---//
-     const displayAllRooms = async () => {
-      const token = Cookies.get("access-token");
-      try {
-        const res = await fetch(getUrl("roomList"), {
-          method: "GET",
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (res.status === 401) {
-          Cookies.remove("access-token");
-          toast.error("Session expired. Please log in again.");
-          navigate("/");
-          return;
-        }
-        if (!res.ok) {
-          toast.error("Couldn't load rooms. Please try again.");
-          return;
-        }
-        const data = await res.json();
-        console.log(data);
-        setRooms(data.rooms);
-      } catch (error) {
-        console.error(error);
-        toast.error("Network error. Check your connection.");
+  //--------- Admin related API calls --------//
+  //--- Returning all rooms again so Updates are instant ---//
+  const displayAllRooms = async () => {
+    const token = Cookies.get("access-token");
+    try {
+      const res = await fetch(getUrl("roomList"), {
+        method: "GET",
+        headers: { Authorization: "Bearer " + token },
+      });
+      if (res.status === 401) {
+        Cookies.remove("access-token");
+        toast.error("Session expired. Please log in again.");
+        navigate("/");
+        return;
       }
-    };
-    // ---- Admin API call to delete a room ---//
+      if (!res.ok) {
+        toast.error("Couldn't load rooms. Please try again.");
+        return;
+      }
+      const data = await res.json();
+      console.log(data);
+      setRooms(data.rooms);
+    } catch (error) {
+      console.error(error);
+      toast.error("Network error. Check your connection.");
+    }
+  };
+  // ---- Admin API call to delete a room ---//
   const adminDeleteRoom = async (id: number) => {
     const token = Cookies.get("access-token");
     try {
@@ -351,55 +419,67 @@ export const Dashboard = () => {
       const data = await res.json();
       console.log(data);
       displayAllRooms();
-      toast.success("You've successfully removed a room.")
+      toast.success("You've successfully removed a room.");
     } catch (error) {
       console.error(error);
       toast.error("Network error. Check your connection.");
     }
   };
 
-
-
   // ---- Admin API call to create a room ---//
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomCapacity, setNewRoomCapacity] = useState("");
   const [newRoomPurpose, setNewRoomPurpose] = useState("");
   const [openCreateModal, setOpenCreateModal] = useState(false);
-  const adminCreateRoom = async()=>{
-     const token = Cookies.get("access-token");
+  const adminCreateRoom = async () => {
+    if (parseInt(newRoomCapacity) > 20) {
+      toast.error("A room can have up to 20 people only");
+      return;
+    }
+    const token = Cookies.get("access-token");
     try {
       const res = await fetch(getUrl(`createRoomAdmin`), {
         method: "POST",
-        headers: { Authorization: "Bearer " + token, "Content-Type" : "application/json"},
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-            name: newRoomName,
-            capacity: newRoomCapacity,
-            purpose: newRoomPurpose
-        })
+          name: newRoomName,
+          capacity: newRoomCapacity,
+          purpose: newRoomPurpose,
+        }),
       });
       const data = await res.json();
       console.log(data);
       displayAllRooms();
-      toast.success("You've successfully created a room.")
+      toast.success("You've successfully created a room.");
     } catch (error) {
       console.error(error);
       toast.error("Network error. Check your connection.");
     }
-  }
+  };
 
   // ---- Admin API call to update a room ---//
   const [currUpdateRoom, setCurUpdateRoom] = useState<number | null>(null);
-  const adminUpdateRoom = async(roomId: number)=>{
+  const adminUpdateRoom = async (roomId: number) => {
+    if (parseInt(newRoomCapacity) > 20) {
+      toast.error("A room can have up to 20 people only");
+      return;
+    }
     const token = Cookies.get("access-token");
     try {
-        const res = await fetch(getUrl(`updateRoomAdmin/${roomId}`), {
+      const res = await fetch(getUrl(`updateRoomAdmin/${roomId}`), {
         method: "PATCH",
-        headers: { Authorization: "Bearer " + token, "Content-Type" : "application/json"},
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-            name: newRoomName,
-            capacity: newRoomCapacity,
-            purpose: newRoomPurpose
-        })
+          name: newRoomName,
+          capacity: newRoomCapacity,
+          purpose: newRoomPurpose,
+        }),
       });
       const data = await res.json();
       console.log(data);
@@ -409,11 +489,10 @@ export const Dashboard = () => {
       console.error(error);
       toast.error("Network error. Check your connection.");
     }
-  }
+  };
 
   return (
     <div className="min-h-screen text-neutral-900">
-       
       <header className="sticky top-0 z-20 backdrop-blur-md bg-white/60 border-b border-white/40">
         <nav className="w-11/12 max-w-6xl mx-auto flex items-center justify-between py-3 md:py-4">
           <div className="flex items-center gap-2">
@@ -449,7 +528,9 @@ export const Dashboard = () => {
               Dashboard
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">
-              {userInfo?.userName ? `Welcome back, ${userInfo.userName.split(" ")[0]}` : "Available rooms"}
+              {userInfo?.userName
+                ? `Welcome back, ${userInfo.userName.split(" ")[0]}`
+                : "Available rooms"}
             </h1>
             <p className="mt-2 text-sm md:text-base text-neutral-600">
               Browse {rooms.length} room{rooms.length === 1 ? "" : "s"} and pick
@@ -466,36 +547,47 @@ export const Dashboard = () => {
         {/* --- Quick stats strip --- */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 mb-6 md:mb-8">
           <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4">
-            <div className="text-xs font-medium text-neutral-500">Total rooms</div>
+            <div className="text-xs font-medium text-neutral-500">
+              Total rooms
+            </div>
             <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
               {rooms.length}
             </div>
           </div>
           <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4">
-            <div className="text-xs font-medium text-neutral-500">Active now</div>
+            <div className="text-xs font-medium text-neutral-500">
+              Active now
+            </div>
             <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
               {rooms.filter((r) => r.is_active).length}
             </div>
           </div>
           <div className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4 hidden md:block">
-            <div className="text-xs font-medium text-neutral-500">Largest capacity</div>
+            <div className="text-xs font-medium text-neutral-500">
+              Largest capacity
+            </div>
             <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums">
               {rooms.length > 0 ? Math.max(...rooms.map((r) => r.capacity)) : 0}
-              <span className="ml-1 text-sm font-medium text-neutral-500">people</span>
+              <span className="ml-1 text-sm font-medium text-neutral-500">
+                people
+              </span>
             </div>
           </div>
         </div>
-
 
         {/* --- This is the filtering section --- */}
         <div className="mb-6 md:mb-8 rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-4 md:p-5">
           <div className="flex flex-col lg:flex-row lg:items-end gap-4 lg:gap-6">
             <label className="flex flex-col gap-1.5 lg:w-56">
-              <span className="text-xs font-medium text-neutral-700">Sort by capacity</span>
+              <span className="text-xs font-medium text-neutral-700">
+                Sort by capacity
+              </span>
               <div className="relative">
                 <select
                   value={sortByCapacity}
-                  onChange={(e) => setSortByCapacity(e.target.value as typeof sortByCapacity)}
+                  onChange={(e) =>
+                    setSortByCapacity(e.target.value as typeof sortByCapacity)
+                  }
                   className="w-full appearance-none rounded-lg border border-neutral-300 bg-white px-3 py-2 pr-9 text-sm
                              focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
                 >
@@ -510,7 +602,9 @@ export const Dashboard = () => {
             </label>
 
             <label className="flex flex-col gap-1.5 lg:w-64">
-              <span className="text-xs font-medium text-neutral-700">Room name</span>
+              <span className="text-xs font-medium text-neutral-700">
+                Room name
+              </span>
               <div className="relative">
                 <select
                   value={nameFilter}
@@ -520,7 +614,9 @@ export const Dashboard = () => {
                 >
                   <option value="all">All rooms</option>
                   {uniqueRoomNames.map((name) => (
-                    <option key={name} value={name}>{name}</option>
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
                   ))}
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 text-xs">
@@ -530,7 +626,9 @@ export const Dashboard = () => {
             </label>
 
             <div className="flex flex-col gap-1.5 flex-1 ">
-              <span className="text-xs font-medium text-neutral-700">Status</span>
+              <span className="text-xs font-medium text-neutral-700">
+                Status
+              </span>
               <div className="inline-flex flex-wrap gap-1.5 rounded-full bg-neutral-100 border border-neutral-200 p-1 w-fit">
                 {statusOptions.map((opt) => {
                   const active = statusFilter === opt.value;
@@ -550,7 +648,6 @@ export const Dashboard = () => {
                   );
                 })}
               </div>
-              
             </div>
             {userInfo?.role === "admin" && (
               <button
@@ -563,9 +660,7 @@ export const Dashboard = () => {
               </button>
             )}
           </div>
-          
         </div>
-
 
         {/* --- This section is displaying all the rooms. Also checks if there are no rooms to render text accordingly --- */}
         <div className="flex items-baseline justify-between mb-4 md:mb-5">
@@ -577,7 +672,7 @@ export const Dashboard = () => {
           </span>
         </div>
 
-        {rooms.length === 0 ? (
+        {filterRooms.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-300 bg-white/60 p-10 text-center">
             <p className="text-neutral-600">No rooms available right now.</p>
           </div>
@@ -585,17 +680,10 @@ export const Dashboard = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
             {filterRooms.map((data, i) => (
               <motion.article
-                initial={{ opacity: 0, filter: "blur(6px)", y: 12 }}
-                whileInView={{ opacity: 1, filter: "blur(0px)", y: 0 }}
-                transition={{
-                  duration: 0.7,
-                  ease: [0.16, 1, 0.3, 1],
-                  delay: i * 0.04,
-                }}
-                viewport={{ once: true }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
                 key={i}
-                className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60
-                           p-6 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:scale-110 transition-all duration-200"
+                className="group relative rounded-2xl bg-white/70 border border-white/60
+                           p-6 shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:scale-[1.01] transition-all duration-200"
               >
                 <div className="flex items-start justify-between gap-3 mb-5">
                   <h3 className="text-lg font-semibold tracking-tight leading-snug">
@@ -632,7 +720,11 @@ export const Dashboard = () => {
                 </dl>
 
                 <button
-                  onClick={()=> {setSelectedRoom(data); roomDetails(data.id); setOpenDetailsModal(true)}}
+                  onClick={() => {
+                    setSelectedRoom(data);
+                    roomDetails(data.id);
+                    setOpenDetailsModal(true);
+                  }}
                   type="button"
                   disabled={!data.is_active}
                   className="mt-6 w-full bg-neutral-900 text-white rounded-full py-2 text-sm font-medium
@@ -642,7 +734,7 @@ export const Dashboard = () => {
                   {data.is_active ? "Book room" : "Unavailable"}
                 </button>
 
-                {userInfo?.role === 'admin' && (
+                {userInfo?.role === "admin" && (
                   <div className="mt-3 flex items-center gap-2">
                     <button
                       onClick={() => {
@@ -672,7 +764,6 @@ export const Dashboard = () => {
         )}
       </main>
 
-
       {/* --- This is the Room modal section --- */}
       {openCreateModal && (
         <section
@@ -692,7 +783,9 @@ export const Dashboard = () => {
                   {currUpdateRoom ? "Update room" : "New room"}
                 </h2>
                 <p className="mt-0.5 text-xs text-neutral-500">
-                  {currUpdateRoom ? "Edit the values and save." : "Add a room admins can publish."}
+                  {currUpdateRoom
+                    ? "Edit the values and save."
+                    : "Add a room admins can publish."}
                 </p>
               </div>
               <button
@@ -707,8 +800,7 @@ export const Dashboard = () => {
               </button>
             </div>
 
-
-           {/* --- This is update room section --- */}
+            {/* --- This is update room section --- */}
             <form
               className="flex flex-col gap-4"
               onSubmit={(e) => {
@@ -726,7 +818,9 @@ export const Dashboard = () => {
               }}
             >
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-neutral-700">Name</span>
+                <span className="text-xs font-medium text-neutral-700">
+                  Name
+                </span>
                 <input
                   required
                   type="text"
@@ -738,7 +832,9 @@ export const Dashboard = () => {
               </label>
 
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-neutral-700">Capacity</span>
+                <span className="text-xs font-medium text-neutral-700">
+                  Capacity
+                </span>
                 <input
                   required
                   type="number"
@@ -751,7 +847,9 @@ export const Dashboard = () => {
               </label>
 
               <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-neutral-700">Purpose</span>
+                <span className="text-xs font-medium text-neutral-700">
+                  Purpose
+                </span>
                 <input
                   required
                   type="text"
@@ -802,7 +900,10 @@ export const Dashboard = () => {
                 <p className="mt-0.5 text-xs text-neutral-500">
                   Schedule and availability
                 </p>
-                <p className="mt-2 font-bold text-xs text-neutral-500">Please note that bookings are operational from 9AM-5PM, and are closed on the weekends.</p>
+                <p className="mt-2 font-bold text-xs text-neutral-500">
+                  Please note that bookings are operational from 9AM-5PM, and
+                  are closed on the weekends.
+                </p>
               </div>
               <button
                 type="button"
@@ -817,16 +918,21 @@ export const Dashboard = () => {
               <div className="px-6 py-16 flex flex-col items-center justify-center text-center">
                 <div className="h-10 w-10 rounded-full border-2 border-neutral-200 border-t-neutral-900 animate-spin" />
                 <p className="mt-5 text-sm font-medium">Submitting request…</p>
-                <p className="mt-1 text-xs text-neutral-500">Talking to the server, hang tight.</p>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Talking to the server, hang tight.
+                </p>
               </div>
             ) : confirmedBooking ? (
               <div className="px-6 py-12 flex flex-col items-center justify-center text-center">
                 <div className="h-14 w-14 rounded-full bg-neutral-900 text-white flex items-center justify-center text-2xl font-bold">
                   ✓
                 </div>
-                <h3 className="mt-5 text-lg font-bold tracking-tight">Booking confirmed</h3>
+                <h3 className="mt-5 text-lg font-bold tracking-tight">
+                  Booking confirmed
+                </h3>
                 <p className="mt-2 text-sm text-neutral-600 max-w-[320px]">
-                  Your room is locked in. You can find it any time in your profile.
+                  Your room is locked in. You can find it any time in your
+                  profile.
                 </p>
                 <button
                   type="button"
@@ -841,7 +947,9 @@ export const Dashboard = () => {
                 <div className="h-14 w-14 rounded-full bg-neutral-900 text-white flex items-center justify-center text-2xl font-bold">
                   ✓
                 </div>
-                <h3 className="mt-5 text-lg font-bold tracking-tight">Request submitted</h3>
+                <h3 className="mt-5 text-lg font-bold tracking-tight">
+                  Request submitted
+                </h3>
                 <p className="mt-2 text-sm text-neutral-600 max-w-[320px]">
                   Your booking is now{" "}
                   <span className="font-semibold">tentative</span>. Confirm
@@ -857,8 +965,8 @@ export const Dashboard = () => {
                       remainingMs === 0
                         ? "text-red-600"
                         : remainingMs < 2 * 60 * 1000
-                        ? "text-amber-600"
-                        : "text-neutral-900"
+                          ? "text-amber-600"
+                          : "text-neutral-900"
                     }`}
                   >
                     {remainingMs === 0 ? (
@@ -882,8 +990,8 @@ export const Dashboard = () => {
                     Confirm Later
                   </button>
                   <button
-                     disabled={remainingMs === 0 || tentativeRoomId === null}
-                    onClick={()=> confirmBooking(tentativeRoomId)}
+                    disabled={remainingMs === 0 || tentativeRoomId === null}
+                    onClick={() => confirmBooking(tentativeRoomId)}
                     type="button"
                     className="flex-1 rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium hover:bg-neutral-800 transition-all cursor-pointer disabled:bg-neutral-300 disabled:cursor-not-allowed"
                   >
@@ -892,209 +1000,260 @@ export const Dashboard = () => {
                 </div>
               </div>
             ) : (
-            <>
-            <div className="px-6 py-5 space-y-6">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
-                  Room details
-                </h3>
-                <dl className="rounded-xl border border-neutral-200/80 divide-y divide-neutral-200/80 text-sm">
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <dt className="text-neutral-500">Capacity</dt>
-                    <dd className="font-medium">
-                      {selectedRoom?.capacity}{" "}
-                      {selectedRoom?.capacity === 1 ? "person" : "people"}
-                    </dd>
+              <>
+                <div className="px-6 py-5 space-y-6">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+                      Room details
+                    </h3>
+                    <dl className="rounded-xl border border-neutral-200/80 divide-y divide-neutral-200/80 text-sm">
+                      <div className="flex items-center justify-between px-4 py-2.5">
+                        <dt className="text-neutral-500">Capacity</dt>
+                        <dd className="font-medium">
+                          {selectedRoom?.capacity}{" "}
+                          {selectedRoom?.capacity === 1 ? "person" : "people"}
+                        </dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-3 px-4 py-2.5">
+                        <dt className="text-neutral-500 shrink-0">Purpose</dt>
+                        <dd className="font-medium text-right">
+                          {selectedRoom?.purpose}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between px-4 py-2.5">
+                        <dt className="text-neutral-500">Status</dt>
+                        <dd>
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                              selectedRoom?.is_active
+                                ? "bg-neutral-900 text-white border border-neutral-900"
+                                : "bg-neutral-50 text-neutral-500 border border-neutral-300"
+                            }`}
+                          >
+                            {selectedRoom?.is_active ? "Active" : "Inactive"}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
                   </div>
-                  <div className="flex items-start justify-between gap-3 px-4 py-2.5">
-                    <dt className="text-neutral-500 shrink-0">Purpose</dt>
-                    <dd className="font-medium text-right">
-                      {selectedRoom?.purpose}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <dt className="text-neutral-500">Status</dt>
-                    <dd>
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                          selectedRoom?.is_active
-                            ? "bg-neutral-900 text-white border border-neutral-900"
-                            : "bg-neutral-50 text-neutral-500 border border-neutral-300"
-                        }`}
-                      >
-                        {selectedRoom?.is_active ? "Active" : "Inactive"}
-                      </span>
-                    </dd>
-                  </div>
-                </dl>
-              </div>
 
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
-                  Existing bookings
-                  {roomSchedule?.room_schedule_details && (
-                    <span className="ml-2 text-neutral-400 normal-case tracking-normal font-normal">
-                      ({roomSchedule.room_schedule_details.length})
-                    </span>
-                  )}
-                </h3>
-                {!roomSchedule ? (
-                  <div className="rounded-xl border border-neutral-200/80 px-4 py-3 text-sm">
-                    <p className="text-neutral-500">Loading schedule…</p>
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+                      Existing bookings
+                      {roomSchedule?.room_schedule_details && (
+                        <span className="ml-2 text-neutral-400 normal-case tracking-normal font-normal">
+                          ({roomSchedule.room_schedule_details.length})
+                        </span>
+                      )}
+                    </h3>
+                    {!roomSchedule ? (
+                      <div className="rounded-xl border border-neutral-200/80 px-4 py-3 text-sm">
+                        <p className="text-neutral-500">Loading schedule…</p>
+                      </div>
+                    ) : roomSchedule.room_schedule_details.length === 0 ? (
+                      <div className="rounded-xl border border-neutral-200/80 px-4 py-3 text-sm">
+                        <p className="text-neutral-500">
+                          No bookings yet — wide open.
+                        </p>
+                      </div>
+                    ) : (
+                      <ul className="rounded-xl border border-neutral-200/80 divide-y divide-neutral-200/80 text-sm">
+                        {roomSchedule.room_schedule_details.map((b) => (
+                          <li
+                            key={b.id}
+                            className="px-4 py-3 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              {userInfo?.userId === b.user_id && (
+                                <span
+                                  className={`text-[10px] ${b.status === "cancelled" ? "text-neutral-700" : "text-emerald-600"} font-medium`}
+                                >
+                                  your booking
+                                </span>
+                              )}
+
+                              <div className="font-medium truncate">
+                                {new Date(b.start_time).toLocaleDateString(
+                                  undefined,
+                                  {
+                                    weekday: "short",
+                                    month: "short",
+                                    day: "numeric",
+                                  },
+                                )}
+                              </div>
+
+                              <div className="text-xs text-neutral-500">
+                                {new Date(b.start_time).toLocaleTimeString(
+                                  undefined,
+                                  {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  },
+                                )}
+                                {" – "}
+                                {new Date(b.end_time).toLocaleTimeString(
+                                  undefined,
+                                  {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  },
+                                )}
+                              </div>
+                            </div>
+                            <span
+                              className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                b.status === "confirmed"
+                                  ? "bg-neutral-900 text-white border border-neutral-900"
+                                  : b.status === "tentative"
+                                    ? "bg-amber-50 text-amber-800 border border-amber-300"
+                                    : "bg-neutral-50 text-neutral-500 border border-neutral-300"
+                              }`}
+                            >
+                              {b.status.charAt(0).toUpperCase() +
+                                b.status.slice(1)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                ) : roomSchedule.room_schedule_details.length === 0 ? (
-                  <div className="rounded-xl border border-neutral-200/80 px-4 py-3 text-sm">
-                    <p className="text-neutral-500">No bookings yet — wide open.</p>
-                  </div>
-                ) : (
-                  <ul className="rounded-xl border border-neutral-200/80 divide-y divide-neutral-200/80 text-sm">
-                    {roomSchedule.room_schedule_details.map((b) => (
-                      <li key={b.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium truncate">
-                            {new Date(b.start_time).toLocaleDateString(undefined, {
-                              weekday: "short",
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </div>
-                          <div className="text-xs text-neutral-500">
-                            {new Date(b.start_time).toLocaleTimeString(undefined, {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                            {" – "}
-                            {new Date(b.end_time).toLocaleTimeString(undefined, {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
+
+                  {/* The dates are in UTC, but a quick fix is simply: 
+                  min={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`}
+                   */}
+
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+                      Pick a date
+                    </h3>
+                    <label className="flex flex-col gap-1.5">
+                      <input
+                        required
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        min={new Date().toISOString().split("T")[0]}
+                        className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
+                      />
+                      <span className="text-xs text-neutral-500">
+                        Booked dates above are unavailable.
+                      </span>
+                    </label>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-xs font-medium text-neutral-700">
+                          Start time
+                        </span>
+                        <input
+                          required
+                          min="09:00"
+                          max="17:00"
+                          type="time"
+                          value={startTime}
+                          onChange={(e) => setStartTime(e.target.value)}
+                          className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
+                                 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-xs font-medium text-neutral-700">
+                          End time
+                        </span>
+                        <input
+                          required
+                          max="17:00"
+                          type="time"
+                          value={endTime}
+                          onChange={(e) => setEndTime(e.target.value)}
+                          min={startTime || "09:00"}
+                          className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
+                                 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
+                        />
+                      </label>
+                    </div>
+
+                    {timeConflict && (
+                      <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm">
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-[11px] font-bold">
+                            !
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-red-800">
+                              Time slot unavailable
+                            </p>
+                            <p className="mt-0.5 text-red-700 text-xs">
+                              Your selection conflicts with an existing booking.
+                              Pick a different slot.
+                            </p>
+                            {conflicts.length > 0 && (
+                              <ul className="mt-2 space-y-1">
+                                {conflicts.map((c) => (
+                                  <li
+                                    key={c.id}
+                                    className="text-xs text-red-800"
+                                  >
+                                    {new Date(c.start_time).toLocaleDateString(
+                                      undefined,
+                                      {
+                                        weekday: "short",
+                                        month: "short",
+                                        day: "numeric",
+                                      },
+                                    )}
+                                    {" · "}
+                                    {new Date(c.start_time).toLocaleTimeString(
+                                      undefined,
+                                      {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      },
+                                    )}
+                                    {" – "}
+                                    {new Date(c.end_time).toLocaleTimeString(
+                                      undefined,
+                                      {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      },
+                                    )}
+                                    <span className="ml-2 text-[10px] uppercase tracking-wider text-red-600/80">
+                                      {c.status}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         </div>
-                        <span
-                          className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                            b.status === "confirmed"
-                              ? "bg-neutral-900 text-white border border-neutral-900"
-                              : b.status === "tentative"
-                              ? "bg-amber-50 text-amber-800 border border-amber-300"
-                              : "bg-neutral-50 text-neutral-500 border border-neutral-300"
-                          }`}
-                        >
-                          {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
-                  Pick a date
-                </h3>
-                <label className="flex flex-col gap-1.5">
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    min={new Date().toISOString().split("T")[0]}
-                    className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
-                               focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
-                  />
-                  <span className="text-xs text-neutral-500">
-                    Booked dates above are unavailable.
-                  </span>
-                </label>
-
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-neutral-700">Start time</span>
-                    <input
-                      min="09:00"
-                      max="17:00"
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
-                                 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-neutral-700">End time</span>
-                    <input
-                      max="17:00"
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      min={startTime || "09:00"}
-                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm
-                                 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all cursor-pointer"
-                    />
-                  </label>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {timeConflict && (
-                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm">
-                    <div className="flex items-start gap-2">
-                      <span className="shrink-0 inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white text-[11px] font-bold">!</span>
-                      <div className="min-w-0">
-                        <p className="font-semibold text-red-800">Time slot unavailable</p>
-                        <p className="mt-0.5 text-red-700 text-xs">
-                          Your selection conflicts with an existing booking. Pick a different slot.
-                        </p>
-                        {conflicts.length > 0 && (
-                          <ul className="mt-2 space-y-1">
-                            {conflicts.map((c) => (
-                              <li key={c.id} className="text-xs text-red-800">
-                                {new Date(c.start_time).toLocaleDateString(undefined, {
-                                  weekday: "short",
-                                  month: "short",
-                                  day: "numeric",
-                                })}
-                                {" · "}
-                                {new Date(c.start_time).toLocaleTimeString(undefined, {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                                {" – "}
-                                {new Date(c.end_time).toLocaleTimeString(undefined, {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                                <span className="ml-2 text-[10px] uppercase tracking-wider text-red-600/80">
-                                  {c.status}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-
-            </div>
-           
-            <div className="px-6 pb-6 pt-2 flex flex-col sm:flex-row gap-3 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setOpenDetailsModal(false)}
-                className="rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={() => selectedRoom && requestBooking(selectedRoom.id)}
-                className="rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium
+                <div className="px-6 pb-6 pt-2 flex flex-col sm:flex-row gap-3 sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setOpenDetailsModal(false)}
+                    className="rounded-full border border-neutral-300 px-5 py-2 text-sm font-medium hover:bg-neutral-50 transition-all cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      selectedRoom && requestBooking(selectedRoom.id)
+                    }
+                    className="rounded-full bg-neutral-900 text-white px-5 py-2 text-sm font-medium
                            hover:bg-neutral-800 transition-all cursor-pointer disabled:bg-neutral-300 disabled:cursor-not-allowed"
-              >
-                Request booking
-              </button>
-
-            </div>
-            </>
+                  >
+                    Request booking
+                  </button>
+                </div>
+              </>
             )}
           </motion.div>
         </section>

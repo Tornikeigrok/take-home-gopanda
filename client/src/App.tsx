@@ -22,6 +22,11 @@ function App() {
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
 
+  //--- The states for resetting password ---//
+  const [resetEmail, setResetEmail] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [repeatNewPassword, setRepeatNewPassword] = useState('')
+
 
   //--- Prevent the scroll while the login modal is displayed ---//
   useEffect(() => {
@@ -30,10 +35,27 @@ function App() {
   }, [showLoginModal])
 
 
-
+  //--- Store errors for readability --- //
+  const errors: Record<number, string> = {
+  401: "Invalid Credentials.",
+  404: "Email not found please register.",
+  409: "Email already exists, please login.",
+  429: "Too many requests, try again later.",
+  };
 
   //--- Api call to register endpoint to create an account ---///
   const registerCall = async () => {
+    if(password.length < 8){
+       toast.error("Password must be at least 8 characters");
+       return;
+    }
+    const hasLetter = /[a-zA-Z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    if(!hasLetter || !hasNumber){
+       toast.error("Password must contain at least one letter and one number");
+    return;
+    }
+
     try {
       const res = await fetch(getUrl('registerUser'), {
         method: 'POST',
@@ -44,14 +66,16 @@ function App() {
           password: password 
         }),
       })
+      const data = await res.json();
       if (res.ok) {
+        Cookies.set('access-token', data.token);
         setTimeout(()=>{
           navigate('/Dashboard');
         }, 500);
-        console.log('successfully registered');
+       
       }
-      else if(res.status === 409){
-          toast.error("Email already exists, please login.");
+      else if(errors[res.status]){
+          toast.error(errors[res.status]);
           return;
       }
     } catch (error) {
@@ -79,12 +103,8 @@ function App() {
         }, 500);
         console.log('successfully registered');
       }
-      else if(res.status === 401){
-        toast.error("Invalid Credentials.");
-        return;
-      }
-      else if(res.status === 404){
-        toast.error("Email not found please register.");
+      else if(errors[res.status]){
+        toast.error(errors[res.status]);
         return;
       }
     } catch (error) {
@@ -92,6 +112,35 @@ function App() {
       Cookies.remove('access-token');
     }
   }
+
+  //--- This is Reset password endpoint ---//
+
+  const resetPassword = async()=>{
+    try {
+      const res = await fetch(getUrl('resetPassword'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: resetEmail, 
+          password: newPassword 
+        }),
+      })
+      if (res.ok) {
+        toast.success("Password Successfully Changed.");
+        setTimeout(()=>{
+            setView('login');
+        }, 1000);
+      }
+      else if(res.status === 404){
+        toast.error("Account does not exist.");
+        return;
+      }
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+  };
+
 
 
 
@@ -109,7 +158,7 @@ function App() {
 
   return (
     <div className="min-h-screen text-neutral-900">
-      <Toaster position='top-center'/>
+    
       {/* Header */}
       <header className="sticky top-0 z-20 backdrop-blur-md bg-white/60 border-b border-white/40">
         <nav className="w-11/12 max-w-6xl mx-auto flex items-center justify-between py-3 md:py-4">
@@ -120,10 +169,7 @@ function App() {
             <span className="text-lg md:text-xl font-bold tracking-tight">MeetMe</span>
           </a>
 
-          <ul className="hidden sm:flex gap-6 items-center text-sm md:text-base text-neutral-700">
-            <li className="hover:text-neutral-900 cursor-pointer transition-colors">About</li>
-            <li className="hover:text-neutral-900 cursor-pointer transition-colors">Preview</li>
-          </ul>
+          
 
           <button
             onClick={() => setShowLoginModal(true)}
@@ -198,6 +244,7 @@ function App() {
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-neutral-900 text-white text-sm font-bold">
               M
             </span>
+           
             <button
               onClick={() => setShowLoginModal(false)}
               className="flex items-center justify-center border border-neutral-400 hover:border-neutral-500 rounded-full p-1 w-7 h-7 text-xs"
@@ -341,12 +388,18 @@ function App() {
             <section>
               <h2 className="text-2xl font-bold tracking-tight">Reset your password</h2>
               <p className="mt-1 text-sm text-neutral-600">
-                Enter your email and we&apos;ll send you a reset link.
+                Enter your email and choose a new password.
               </p>
 
               <form
                 className="mt-6 flex flex-col gap-4"
-                onSubmit={(e) => { e.preventDefault() }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (newPassword !== repeatNewPassword) {
+                    toast.error("Passwords do not match.")
+                    return;
+                  }; resetPassword();
+                }}
               >
                 <label className="flex flex-col gap-1.5">
                   <span className={labelClass}>Email</span>
@@ -354,8 +407,32 @@ function App() {
                     required
                     type="email"
                     placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelClass}>New password</span>
+                  <input
+                    required
+                    type="password"
+                    placeholder="At least 8 characters"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1.5">
+                  <span className={labelClass}>Repeat new password</span>
+                  <input
+                    required
+                    type="password"
+                    placeholder="Re-enter new password"
+                    value={repeatNewPassword}
+                    onChange={(e) => setRepeatNewPassword(e.target.value)}
                     className={inputClass}
                   />
                 </label>
@@ -365,7 +442,7 @@ function App() {
                   className="mt-2 w-full bg-neutral-900 text-white rounded-full py-2.5 text-sm font-medium
                              hover:bg-neutral-800 transition-all duration-200 cursor-pointer"
                 >
-                  Send reset link
+                  Reset password
                 </button>
               </form>
 

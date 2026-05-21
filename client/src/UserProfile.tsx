@@ -27,6 +27,7 @@ interface UserInfo {
 export const UserProfile = () => {
   const navigate = useNavigate();
 
+  //--- Constantly check that user has a valid token, or else log them out ---//
   useEffect(() => {
     const token = Cookies.get("access-token");
 
@@ -34,6 +35,7 @@ export const UserProfile = () => {
       navigate("/");
     }
   }, []);
+
 
   //--- User info ---//
   const [userInfo, setUserInfo] = useState<UserInfo | undefined>();
@@ -97,6 +99,7 @@ export const UserProfile = () => {
     scheduledRooms();
   }, []);
 
+  // ---Display all the room bookings ---//
   const scheduledRooms = async () => {
       const token = Cookies.get("access-token");
       try {
@@ -157,10 +160,10 @@ export const UserProfile = () => {
             id: id
         })
       });
+      toast.success("You have cancelled the booking");
       const data = await res.json();
       console.log(data);
       scheduledRooms();
-      toast.success("You have cancelled the meting");
     } catch (error) {
       console.error(error);
       toast.error("Network error. Check your connection.");
@@ -209,7 +212,13 @@ export const UserProfile = () => {
           >
             ← Back to rooms
           </button>
+
+          <button onClick={()=> {Cookies.remove('access-token'); navigate('/')}} className="hover:bg-red-300 w-[70px] h-[35px] rounded-xl transition-all duration-200">
+            Log out
+          </button>
+          
         </nav>
+        
       </header>
 
       <main className="w-11/12 max-w-5xl mx-auto px-2 py-10 md:py-14">
@@ -255,7 +264,7 @@ export const UserProfile = () => {
                   delay: i * 0.04,
                 }}
                 viewport={{ once: true }}
-                className="rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm p-6 hover:shadow-md transition-shadow duration-200"
+                className="rounded-2xl bg-white/70 flex flex-col justify-between backdrop-blur-sm border border-white/60 shadow-sm p-6 hover:shadow-md transition-shadow duration-200"
               >
                 <div className="flex items-start justify-between gap-3 mb-4">
                   <div className="min-w-0">

@@ -1,13 +1,13 @@
 require("dotenv").config();
 
-//--- Import the express server + cors to get started ---//
+//--- Import the express server + cors ---//
 const express = require("express");
 const cors = require("cors");
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-//--- This is DB related stuff to connect to the backend ---//
+//--- Connect to the DB ---//
 const { Pool } = require("pg");
 const pool = new Pool({
   user: process.env.DB_USER,
@@ -17,7 +17,7 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-//--- This is for password encryption ---//
+//--- Password encryption ---//
 const bcrypt = require("bcrypt");
 
 //JWT import
@@ -36,19 +36,17 @@ const io = new Server(server, {
 app.set("io", io);
 
 //--- Redis client --- //
-const redis = require('redis');
+const redis = require("redis");
 const redisClient = redis.createClient({
-  socket: { reconnectStrategy: false }
+  socket: { reconnectStrategy: false },
 });
-
-redisClient.on('error', (err)=> console.error('Redis error: ', err.message));
+redisClient.on("error", (err) => console.error("Redis error: ", err.message));
 //--- Add catch as this is the top of commonJS, so the little delay is negligable ---//
-redisClient.connect().catch((err)=>{
-  console.error('Redis connection has failed: ', err.message);
+redisClient.connect().catch((err) => {
+  console.error("Redis connection has failed: ", err.message);
 });
 
-
-//--- Status errors for API endpoints. A reusable function that extends Error class ---//
+//--- Status errors for API endpoints. A centralized error handling ---//
 class StatusError extends Error {
   constructor(message, statusCode, err) {
     super(message);
@@ -58,7 +56,8 @@ class StatusError extends Error {
 }
 
 //--- AUTH SECTION -> endpoints in this section: [ Register, Login, Reset password ] ---//
-//Reusable query that checks Email existance
+
+// --- Reusable query that checks Email existance ---//
 const emailExists = async (email) => {
   const userExists = await pool.query("SELECT * FROM users WHERE email = $1", [
     email,
@@ -76,15 +75,16 @@ const emailExists = async (email) => {
 
 //--- JWT + token verification and validation ---//
 const tokenAuthentication = (req, res, next) => {
-  //get authorization header from the request
+  //--- get authorization header from the request
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
     return next(
       new StatusError("Access-Token missing", 401, "ACCESS_TOKEN_MISSING"),
-    ); // Fixed: use next() instead of throw inside callback
+    );
   }
+
   jwt.verify(token, SECRET_STRING, (error, user) => {
     if (error) {
       return next(
@@ -93,9 +93,9 @@ const tokenAuthentication = (req, res, next) => {
           401,
           "TOKEN_VER_ERROR",
         ),
-      ); // Fixed: use next() instead of throw inside async callback
+      );
     }
-    req.user = user; //This allows me to acces this user in later routes
+    req.user = user;
     next();
   });
 };
@@ -108,9 +108,16 @@ app.post("/registerUser", async (req, res, next) => {
   const key = `registerFailed${email}`;
   const attemptNumber = parseInt(await redisClient.get(key)) || 0;
 
-  if(attemptNumber >= 5){
-    return next(new StatusError("Too many registration requests", 429, "REDIS_LIMIT_REACHED"));
+  if (attemptNumber >= 5) {
+    return next(
+      new StatusError(
+        "Too many registration requests",
+        429,
+        "REDIS_LIMIT_REACHED",
+      ),
+    );
   }
+
   try {
     //- First check if user already exists in the DB
     const existing = await pool.query("SELECT 1 FROM users WHERE email = $1", [
@@ -129,15 +136,17 @@ app.post("/registerUser", async (req, res, next) => {
       [name, email, encryptedPassword, created_at],
     );
 
-    const token = jwt.sign({ email },SECRET_STRING, { expiresIn: "24h" },);
+    const token = jwt.sign({ email }, SECRET_STRING, { expiresIn: "24h" });
 
     //Finally, add the user to the DB - they have an account now
     await redisClient.del(key);
-    res
-      .status(200)
-      .json({ success: true, message: "User successfully added to the DB", token });
+    res.status(200).json({
+      success: true,
+      message: "User successfully added to the DB",
+      token,
+    });
   } catch (error) {
-    if(error.statusCode === 409){
+    if (error.statusCode === 409) {
       await redisClient.incr(key);
       await redisClient.expire(key, 60);
     }
@@ -153,8 +162,10 @@ app.post("/userLogin", async (req, res, next) => {
   //--- Add redis key to track number of time user has tried logging in ---//
   const key = `failedLogin${email}`;
   const attemptNumber = parseInt(await redisClient.get(key)) || 0;
-  if(attemptNumber >= 5){
-    return next(new StatusError("Too many login requests", 429, "REDIS_LIMIT_REACHED"));
+  if (attemptNumber >= 5) {
+    return next(
+      new StatusError("Too many login requests", 429, "REDIS_LIMIT_REACHED"),
+    );
   }
 
   try {
@@ -164,7 +175,7 @@ app.post("/userLogin", async (req, res, next) => {
     //If the user exists, perform validation
     const validatePassword = await bcrypt.compare(password, user.password_hash); // Fixed: use returned user object and correct column name
     if (!validatePassword) {
-       throw new StatusError("Password does not match!", 401, "UNAUTHORIZED");
+      throw new StatusError("Password does not match!", 401, "UNAUTHORIZED");
     }
     // Generate JWT token on successful login
     const token = jwt.sign(
@@ -175,9 +186,9 @@ app.post("/userLogin", async (req, res, next) => {
     await redisClient.del(key);
     res.status(200).json({ success: true, message: "User authorized!", token });
   } catch (error) {
-    if(error.statusCode === 401 || error.statusCode === 404){
-         await redisClient.incr(key);
-         await redisClient.expire(key, 60);
+    if (error.statusCode === 401 || error.statusCode === 404) {
+      await redisClient.incr(key);
+      await redisClient.expire(key, 60);
     }
     next(error);
   }
@@ -224,15 +235,14 @@ app.get("/userInfo", tokenAuthentication, async (req, res, next) => {
       email,
     ]);
     const user = currUser.rows[0];
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Sending the current user's info",
-        userName: user.name,
-        userEml: user.email,
-        role: user.role,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Sending the current user's info",
+      userName: user.name,
+      userEml: user.email,
+      userId: user.id,
+      role: user.role,
+    });
   } catch (error) {
     next(error);
   }
@@ -250,7 +260,7 @@ app.get("/usersScheduledRooms", tokenAuthentication, async (req, res, next) => {
       "SELECT * FROM bookings WHERE user_id = $1",
       [userId],
     );
-    res.status(200).json({ sucess: true, userBookings: bookingByUserId.rows });
+    res.status(200).json({ success: true, userBookings: bookingByUserId.rows });
   } catch (error) {
     next(error);
   }
@@ -260,64 +270,76 @@ app.get("/usersScheduledRooms", tokenAuthentication, async (req, res, next) => {
 //--- This endpoint returns a list of all the rooms to dispaly on users' dashboards  ---//
 app.get("/roomList", tokenAuthentication, async (req, res, next) => {
   try {
-    const cached = await redisClient.get('roomList');
-    if(cached){
+    const cached = await redisClient.get("roomList");
+    if (cached) {
       console.log("Cach got hit, returning from cache...");
-      return res.status(200)
-      .json({success: true,
+      return res.status(200).json({
+        success: true,
         message: "Returning rooms list from cache",
         rooms: JSON.parse(cached),
       });
     }
-    
+
     const rooms = await pool.query(`
             SELECT DISTINCT ON (r.id) r.*, b.status
             FROM rooms r
             LEFT JOIN bookings b ON r.id = b.room_id
             ORDER BY r.id, b.start_time DESC NULLS LAST
             `);
-    
-    await redisClient.set('roomList', JSON.stringify(rooms.rows), {EX: 60});
+
+    await redisClient.set("roomList", JSON.stringify(rooms.rows), { EX: 60 });
 
     console.log("DB got hit, returning from DB...");
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Rooms found, returning all rooms",
-        rooms: rooms.rows,
-      });
+    res.status(200).json({
+      success: true,
+      message: "Rooms found, returning all rooms",
+      rooms: rooms.rows,
+    });
   } catch (error) {
     next(error);
   }
 });
 
-
-
 //--- This endpoint receives the date, start_time, end_time, user_id, etc from frontend to request a booking ---//
 app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
-
   const { email } = req.user;
   const { room_id, start_time, end_time } = req.body;
 
-  const key = `requestBookingFailed${email}`;
-  const attemptNumber = parseInt(await redisClient.get(key)) || 0;
-  if(attemptNumber >= 5){
-      return next (new StatusError('Too many requests for a booking.', 429, "REDIS_BOOKING_REQUEST_LIMIT_REACHED"));
+  //--- Validate inputs to ensure correct times + date are requested ---//
+  if (!room_id || !start_time || !end_time) {
+    return next(
+      new StatusError(
+        "Missing inputs to request a booking",
+        422,
+        "MISSING_INPUTS",
+      ),
+    );
   }
 
-   //--- One deidcated connection for transactional ---//
+  const key = `requestBookingFailed${email}`;
+  const attemptNumber = parseInt(await redisClient.get(key)) || 0;
+  if (attemptNumber >= 5) {
+    return next(
+      new StatusError(
+        "Too many requests for a booking.",
+        429,
+        "REDIS_BOOKING_REQUEST_LIMIT_REACHED",
+      ),
+    );
+  }
+
+  //--- One deidcated connection for transactional ---//
   const client = await pool.connect();
 
   try {
     //--- Start the transaction ---//
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
     //--- Validate days as well and prevent bookings on the weekend ---//
     const sentDate = new Date(start_time);
-    const getDay = sentDate.getUTCDay();
+    const getDay = sentDate.getDay();
     if (getDay === 0 || getDay === 6) {
-      await client.query('ROLLBACK'); //If anything goes wrong, undo everything
+      await client.query("ROLLBACK"); //If anything goes wrong, undo everything
       return next(
         new StatusError(
           "Bookings are closed on the weekends.",
@@ -326,13 +348,21 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
         ),
       );
     }
+
     // --- Extract the times for validation --- //
     const start = new Date(start_time);
     const end = new Date(end_time);
     const startHr = start.getHours();
     const endHr = end.getHours();
-    if (startHr < 9 || endHr > 17 || (endHr === 17 && end.getMinutes() > 0)) {
-      await client.query('ROLLBACK');
+    if (
+      startHr < 9 ||
+      startHr > 17 ||
+      endHr < 9 ||
+      endHr > 17 ||
+      (endHr === 17 && end.getMinutes() > 0) ||
+      end.getTime() <= start.getTime()
+    ) {
+      await client.query("ROLLBACK");
       return next(
         new StatusError(
           "Selected times are outside operating hours",
@@ -343,9 +373,10 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
     }
 
     //First get the ID
-    const userInfo = await client.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const userInfo = await client.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email],
+    );
     const userId = userInfo.rows[0].id;
 
     //Before inserting, check against tentative and confirmed bookings only
@@ -361,16 +392,14 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
     );
 
     if (checkRoomSchedules.rows.length > 0) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       await redisClient.incr(key);
       await redisClient.expire(key, 60);
-      return res
-        .status(409)
-        .json({
-          success: false,
-          message: "Time slot conflicts with an existing booking.",
-          conflicts: checkRoomSchedules.rows,
-        });
+      return res.status(409).json({
+        success: false,
+        message: "Time slot conflicts with an existing booking.",
+        conflicts: checkRoomSchedules.rows,
+      });
     }
 
     const booking = await client.query(
@@ -387,43 +416,35 @@ app.post("/requestBooking", tokenAuthentication, async (req, res, next) => {
       ],
     );
     //--- Once request has been written to the DB, finish the transaction ---//
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
-    await redisClient.del('roomList');
+    await redisClient.del("roomList");
 
     //--- Emit after the request is successfully made ---//
     io.emit("booking:updated", {
-        action: "created",
-        room_id,
-        bookingId: booking.rows[0].id,
-        status: booking.rows[0].status,
-        user: { id: userId, name: userInfo.rows[0].name },
-        at: new Date().toISOString(),
+      action: "created",
+      room_id,
+      bookingId: booking.rows[0].id,
+      status: booking.rows[0].status,
+      user: { id: userId, name: userInfo.rows[0].name },
+      at: new Date().toISOString(),
     });
 
-
     await redisClient.del(key);
-    res
-      .status(201)
-      .json({
-        success: true,
-        message: "Tentative booking created",
-        bookDetails: booking.rows[0],
-      });
+    res.status(201).json({
+      success: true,
+      message: "Tentative booking created",
+      bookDetails: booking.rows[0],
+    });
   } catch (error) {
     //--- If anything goes wrong, undo everything ---//
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(error);
-  }finally{
+  } finally {
     //--- After everything, release the client to prevent DB connections exhaustion ---//
     client.release();
   }
 });
-
-
-
-
-
 
 io.on("connect", (socket) => {
   console.log("user connected: ", socket.id);
@@ -456,21 +477,37 @@ app.get(
 //--- Endpoint to allow users to cancel their confirmed ---//
 app.post("/cancelBooking", tokenAuthentication, async (req, res, next) => {
   const { id } = req.body;
+  const { email } = req.user;
   try {
-    const cancelConf = await pool.query("UPDATE bookings SET status = 'cancelled' WHERE id = $1 RETURNING *", [
-      id
+    const userInfo = await pool.query("SELECT id FROM users WHERE email = $1", [
+      email,
     ]);
+    const userId = userInfo.rows[0].id;
+
+    const cancelConf = await pool.query(
+      "UPDATE bookings SET status = 'cancelled' WHERE id = $1 AND user_id = $2 RETURNING *",
+      [id, userId],
+    );
+
+    if (cancelConf.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only cancel your own bookings.",
+      });
+    }
 
     //--- Emit after the booking is successfully cancelled ---//
     io.emit("cancel:booking", {
-      room_id: cancelConf.rows[0].room_id
-    })
+      room_id: cancelConf.rows[0].room_id,
+    });
 
-    await redisClient.del('roomList');
+    await redisClient.del("roomList");
 
-    res
-      .status(200)
-      .json({ success: true, message: "Booking Successfully cancelled.", cancelledInfo: cancelConf.rows[0]});
+    res.status(200).json({
+      success: true,
+      message: "Booking Successfully cancelled.",
+      cancelledInfo: cancelConf.rows[0],
+    });
   } catch (error) {
     next(error);
   }
@@ -482,50 +519,50 @@ app.patch(
   tokenAuthentication,
   async (req, res, next) => {
     const { id } = req.params;
+    const { email } = req.user;
     try {
+      const userInfo = await pool.query(
+        "SELECT id FROM users WHERE email = $1",
+        [email],
+      );
+      const userId = userInfo.rows[0].id;
       const confirmation = await pool.query(
         `
-            UPDATE bookings SET status = $1 WHERE id = $2 
-            AND status = $3 
+            UPDATE bookings SET status = $1 
+            WHERE id = $2 
+            AND user_id = $3
+            AND status = $4
             AND expires_at > NOW()
             RETURNING *
             `,
-        ["confirmed", id, "tentative"],
+        ["confirmed", id, userId, "tentative"],
       );
 
-      if(confirmation.rows.length === 0){
-         return res.status(410).json({ success: false, message: "Booking can't be confirmed (already confirmed or expired)." }); 
+      if (confirmation.rows.length === 0) {
+        return res.status(410).json({
+          success: false,
+          message: "Booking can't be confirmed (already confirmed or expired).",
+        });
       }
 
-      //--- Send live update when user confirms their booking ---//
-      //Get the user name and details from confirmation to send
-      const userId = confirmation.rows[0].user_id;
-      const userInfo = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
-
-      //--- Emit after the request is successfully confirmed ---//
-      io.emit('user-confirmed-booking', {
-         userName: userInfo.rows[0].name,
-         room_id: confirmation.rows[0].room_id,
-         bookingId: confirmation.rows[0].id
+      io.emit("user-confirmed-booking", {
+        userName: userInfo.rows[0].name,
+        room_id: confirmation.rows[0].room_id,
+        bookingId: confirmation.rows[0].id,
       });
 
-      await redisClient.del('roomList');
+      await redisClient.del("roomList");
 
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Booking successfully confirmed.",
-          bookingConfirmation: confirmation.rows[0],
-        });
+      res.status(200).json({
+        success: true,
+        message: "Booking successfully confirmed.",
+        bookingConfirmation: confirmation.rows[0],
+      });
     } catch (error) {
       next(error);
     }
   },
 );
-
-
-
 
 //------------------ ADMIN related endpoints -------------------//
 //--- This is the middleware that checks if currently logged in user is admin ---//
@@ -558,7 +595,7 @@ app.post(
         [name, capacity, purpose],
       );
 
-      await redisClient.del('roomList');
+      await redisClient.del("roomList");
 
       res
         .status(200)
@@ -578,7 +615,7 @@ app.delete(
     try {
       await pool.query("DELETE FROM rooms WHERE id = $1", [id]);
 
-      await redisClient.del('roomList');
+      await redisClient.del("roomList");
 
       res
         .status(200)
@@ -590,6 +627,7 @@ app.delete(
 );
 
 //--- For admin only to update a room ---//
+
 app.patch(
   "/updateRoomAdmin/:id",
   tokenAuthentication,
@@ -601,8 +639,8 @@ app.patch(
       const update = await pool.query(
         `
             UPDATE rooms 
-            SET name = COALESCE($1, name),
-            capacity = COALESCE($2, capacity),
+            SET name =  COALESCE($1, name),
+            capacity =  COALESCE($2, capacity),
             purpose  =  COALESCE($3, purpose)
             WHERE id = $4
             RETURNING *
@@ -610,15 +648,13 @@ app.patch(
         [name, capacity, purpose, id],
       );
 
-      await redisClient.del('roomList');
+      await redisClient.del("roomList");
 
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Admin successfully updated a room. Returning updated room",
-          updatedRoom: update.rows[0],
-        });
+      res.status(200).json({
+        success: true,
+        message: "Admin successfully updated a room. Returning updated room",
+        updatedRoom: update.rows[0],
+      });
     } catch (error) {
       next(error);
     }
@@ -633,16 +669,15 @@ const expiryJob = setInterval(async () => {
     WHERE expires_at < NOW() 
     AND status = 'tentative' RETURNING *`);
 
-    //--- Invalidate cache as every 30 seconds it flips status accordingly ---//
-    if(result.rows.length > 0){
-      await redisClient.del('roomList');
-    }
+  //--- Invalidate cache as every 30 seconds it flips status accordingly ---//
+  if (result.rows.length > 0) {
+    await redisClient.del("roomList");
+  }
 }, 30000);
+
 // --- Listen for server restart or server kill and stop the background worker --- //
 process.on("SIGTERM", () => clearInterval(expiryJob));
 process.on("SIGINT", () => clearInterval(expiryJob));
-
-
 
 // --- Error Block for readability and reusability --- ///
 app.use((err, req, res, next) => {
